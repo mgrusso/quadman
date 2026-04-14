@@ -1,0 +1,41 @@
+{
+  "admin": {
+    "listen": "localhost:2019"
+  },
+  "apps": {
+    "http": {
+      "servers": {
+        "quadman_ui": {
+          "listen": [":80", ":443"],
+          "routes": [
+            {
+              "@id": "quadman-ui",
+              "match": [{"host": ["quadman.example.com"]}],
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [{"dial": "localhost:4000"}]
+                }
+              ],
+              "terminal": true
+            }
+          ]
+        },
+        "quadman_services": {
+          "listen": [":80", ":443"],
+          "routes": []
+        }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": ["quadman.example.com"],
+            "issuers": [{"module": "acme"}]
+          }
+        ]
+      }
+    }
+  }
+}

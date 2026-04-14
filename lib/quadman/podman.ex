@@ -1,0 +1,89 @@
+defmodule Quadman.Podman do
+  @moduledoc """
+  HTTP client for the Podman REST API over a Unix socket.
+
+  All requests go through `Req` with `unix_socket:` pointing to the configured socket path.
+  Podman REST API base: http://d/v5.0.0/libpod/
+  """
+
+  defp socket_path do
+    Application.get_env(:quadman, :podman_socket_path, "/run/user/1000/podman/podman.sock")
+  end
+
+  defp base_req do
+    Req.new(
+      base_url: "http://d/v5.0.0/libpod",
+      unix_socket: socket_path(),
+      receive_timeout: 120_000
+    )
+  end
+
+  @doc """
+  Pull an image. Streams output but we just wait for completion.
+  Returns `:ok` or `{:error, reason}`.
+  """
+  def pull_image(image) do
+    case Req.post(base_req(), url: "/images/pull", params: [reference: image]) do
+      {:ok, %{status: status}} when status in 200..299 -> :ok
+      {:ok, %{status: status, body: body}} -> {:error, "pull failed #{status}: #{inspect(body)}"}
+      {:error, reason} -> {:error, "pull request error: #{inspect(reason)}"}
+    end
+  end
+
+  @doc """
+  Inspect an image and return its digest.
+  Returns `{:ok, digest}` or `{:error, reason}`.
+  """
+  def image_digest(image) do
+    case Req.get(base_req(), url: "/images/#{URI.encode(image)}/json") do
+      {:ok, %{status: 200, body: body}} ->
+        digest = get_in(body, ["Digest"]) || get_in(body, ["Id"])
+        {:ok, digest}
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, "image inspect failed #{status}: #{inspect(body)}"}
+
+      {:error, reason} ->
+        {:error, "image inspect error: #{inspect(reason)}"}
+    end
+  end
+
+  @doc """
+  List running containers. Returns `{:ok, [container_map]}` or `{:error, reason}`.
+  """
+  def list_containers do
+    case Req.get(base_req(), url: "/containers/json", params: [all: true]) do
+      {:ok, %{status: 200, body: body}} -> {:ok, body}
+      {:ok, %{status: status, body: body}} -> {:error, "list containers #{status}: #{inspect(body)}"}
+      {:error, reason} -> {:error, inspect(reason)}
+    end
+  end
+
+  @doc """
+  Fetch stats for all running containers (no-stream).
+  Returns `{:ok, [stats_map]}` or `{:error, reason}`.
+  """
+  def stats do
+    case Req.get(base_req(), url: "/containers/stats", params: [stream: false]) do
+      {:ok, %{status: 200, body: body}} ->
+        entries = Map.get(body, "Stats") || []
+        {:ok, entries}
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, "stats #{status}: #{inspect(body)}"}
+
+      {:error, reason} ->
+        {:error, inspect(reason)}
+    end
+  end
+
+  @doc """
+  Check if the Podman socket is reachable.
+  """
+  def ping do
+    case Req.get(base_req(), url: "/_ping") do
+      {:ok, %{status: 200}} -> :ok
+      _ -> {:error, :unreachable}
+    end
+  end
+end

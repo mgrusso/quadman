@@ -1,0 +1,31 @@
+# /etc/caddy/Caddyfile
+#
+# Caddy configuration for Quadman.
+#
+# Caddy automatically obtains and renews TLS certificates via Let's Encrypt.
+# No certbot or manual certificate management needed.
+#
+# After editing: systemctl reload caddy
+
+{
+    # Keep Admin API local — Quadman uses it to register service routes dynamically
+    admin localhost:2019
+
+    # Optional: set a global email for ACME account
+    # email ops@example.com
+}
+
+# Quadman web UI
+quadman.example.com {
+    reverse_proxy localhost:4000
+}
+
+# Service routes are added dynamically by Quadman via the Admin API.
+# You do not need to add them here — they appear at runtime when you
+# set a domain on a service and deploy it.
+#
+# Example of what Quadman adds automatically:
+#
+# myapp.example.com {
+#     reverse_proxy localhost:8080
+# }

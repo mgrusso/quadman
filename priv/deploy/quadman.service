@@ -1,0 +1,41 @@
+# /etc/systemd/system/quadman.service
+# Install: cp quadman.service /etc/systemd/system/
+#          systemctl daemon-reload
+#          systemctl enable --now quadman
+#
+# The service runs as a dedicated non-root user who owns the Podman socket.
+# Requires: loginctl enable-linger <quadman-user>
+
+[Unit]
+Description=Quadman — Podman service manager
+Documentation=https://github.com/yourorg/quadman
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=quadman
+Group=quadman
+WorkingDirectory=/opt/quadman
+
+# Load secrets from a separate file (not checked into source control)
+EnvironmentFile=-/etc/quadman/env
+
+Environment=PHX_SERVER=true
+Environment=LANG=en_US.UTF-8
+
+ExecStart=/opt/quadman/bin/quadman start
+ExecStop=/opt/quadman/bin/quadman stop
+Restart=on-failure
+RestartSec=5
+
+# Needed so the user systemd session (and Podman socket) persists
+# even without a login session. Run once: loginctl enable-linger quadman
+Environment=XDG_RUNTIME_DIR=/run/user/REPLACE_WITH_UID
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=quadman
+
+[Install]
+WantedBy=multi-user.target

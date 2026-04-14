@@ -1,0 +1,195 @@
+defmodule Quadman.Workers.DeployWorker do
+  @moduledoc """
+  Oban job that executes the full deploy pipeline for a service:
+
+    1. Pull image via Podman REST API
+    2. Get image digest
+    3. Write secrets env file (mode 0600)
+    4. Render and write .container Quadlet file
+    5. Update service record with quadlet_path + unit_name
+    6. systemctl daemon-reload
+    7. systemctl start/restart <unit>
+    8. Poll is-active up to 10x with 1s sleep
+    9. Register Caddy reverse-proxy route (non-fatal, if domain is set)
+   10. Update deployment status + broadcast via PubSub
+  """
+
+  use Oban.Worker, queue: :deployments, max_attempts: 3
+
+  require Logger
+
+  alias Quadman.{Deployments, Services, Quadlets, Systemd, Podman, Caddy}
+
+  @poll_attempts 10
+  @poll_interval_ms 1_000
+
+  @impl Oban.Worker
+  def perform(%Oban.Job{args: %{"deployment_id" => deployment_id}}) do
+    deployment = Deployments.get_deployment!(deployment_id)
+    service = Services.get_service_with_env!(deployment.service_id)
+
+    log = fn message, level ->
+      Deployments.append_log(deployment_id, message, level)
+    end
+
+    Deployments.update_deployment_status(deployment, "running")
+    broadcast_status(deployment_id, "running")
+
+    with {:ok, digest} <- step_pull_image(service, log),
+         :ok <- step_write_quadlet(service, log),
+         :ok <- step_daemon_reload(log),
+         :ok <- step_start_unit(service, log),
+         :ok <- step_poll_active(service, log) do
+      # Reload the service to pick up quadlet_path/unit_name written during step_write_quadlet
+      service = Services.get_service!(service.id)
+      step_register_caddy(service, log)
+
+      Deployments.update_deployment_status(deployment, "succeeded", image_digest: digest)
+      broadcast_status(deployment_id, "succeeded")
+      Services.update_service_status(service, "running")
+      log.("Deploy succeeded", "info")
+      :ok
+    else
+      {:error, reason} ->
+        Deployments.update_deployment_status(deployment, "failed")
+        broadcast_status(deployment_id, "failed")
+        Services.update_service_status(service, "failed")
+        log.("Deploy failed: #{reason}", "error")
+        {:error, reason}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Steps
+  # ---------------------------------------------------------------------------
+
+  defp step_pull_image(service, log) do
+    log.("Pulling image #{service.image}...", "info")
+
+    case Podman.pull_image(service.image) do
+      :ok ->
+        case Podman.image_digest(service.image) do
+          {:ok, digest} ->
+            log.("Image pulled. Digest: #{digest}", "info")
+            {:ok, digest}
+
+          {:error, reason} ->
+            log.("Could not get digest: #{reason}", "warn")
+            {:ok, nil}
+        end
+
+      {:error, reason} ->
+        {:error, "image pull failed: #{reason}"}
+    end
+  end
+
+  defp step_write_quadlet(service, log) do
+    log.("Writing Quadlet files...", "info")
+    env_vars = service.environment_variables
+
+    stack_name =
+      if service.stack_id do
+        stack = Quadman.Stacks.get_stack!(service.stack_id)
+        stack.name
+      end
+
+    with :ok <- Quadlets.write_secrets(service, env_vars),
+         {:ok, path} <- Quadlets.write_container(service, env_vars, stack_name) do
+      unit_name = Quadlets.unit_name(service.name)
+
+      Services.update_service(service, %{quadlet_path: path, unit_name: unit_name})
+
+      log.("Quadlet written to #{path}", "info")
+      :ok
+    end
+  end
+
+  defp step_daemon_reload(log) do
+    log.("Running systemctl daemon-reload...", "info")
+
+    case Systemd.daemon_reload() do
+      :ok -> :ok
+      {:error, reason} -> {:error, "daemon-reload failed: #{reason}"}
+    end
+  end
+
+  defp step_start_unit(service, log) do
+    unit = Quadlets.unit_name(service.name)
+    log.("Starting unit #{unit}...", "info")
+
+    result =
+      case service.status do
+        "running" -> Systemd.restart(unit)
+        _ -> Systemd.start(unit)
+      end
+
+    case result do
+      :ok -> :ok
+      {:error, reason} -> {:error, "unit start failed: #{reason}"}
+    end
+  end
+
+  defp step_poll_active(service, log) do
+    unit = Quadlets.unit_name(service.name)
+    log.("Waiting for #{unit} to become active...", "info")
+    poll_active(unit, @poll_attempts, log)
+  end
+
+  defp poll_active(_unit, 0, _log), do: {:error, "unit did not become active in time"}
+
+  defp poll_active(unit, attempts_left, log) do
+    case Systemd.is_active(unit) do
+      {:ok, "active"} ->
+        :ok
+
+      {:ok, "activating"} ->
+        Process.sleep(@poll_interval_ms)
+        poll_active(unit, attempts_left - 1, log)
+
+      {:ok, status} ->
+        {:error, "unit is #{status}"}
+
+      {:error, reason} ->
+        log.("is-active error: #{reason}", "warn")
+        Process.sleep(@poll_interval_ms)
+        poll_active(unit, attempts_left - 1, log)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Caddy route registration (non-fatal)
+  # ---------------------------------------------------------------------------
+
+  defp step_register_caddy(%{domain: nil}, _log), do: :ok
+  defp step_register_caddy(%{domain: ""}, _log), do: :ok
+
+  defp step_register_caddy(service, log) do
+    upstream = Caddy.upstream_from_port_mappings(service.port_mappings)
+
+    if upstream do
+      log.("Registering Caddy route: #{service.domain} → #{upstream}", "info")
+
+      case Caddy.upsert_route(service.domain, upstream) do
+        :ok ->
+          log.("Caddy route registered.", "info")
+
+        {:error, reason} ->
+          log.("Caddy route failed (non-fatal): #{inspect(reason)}", "warn")
+      end
+    else
+      log.("No port mappings — skipping Caddy route registration.", "warn")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # PubSub broadcast
+  # ---------------------------------------------------------------------------
+
+  defp broadcast_status(deployment_id, status) do
+    Phoenix.PubSub.broadcast(
+      Quadman.PubSub,
+      "deployment:#{deployment_id}",
+      {:status, status}
+    )
+  end
+end
