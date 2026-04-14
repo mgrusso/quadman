@@ -72,18 +72,9 @@ Browser ──HTTPS──► Caddy ──► Quadman (Phoenix/LiveView, port 400
 
 ## Quick install (Linux)
 
-> **Note:** Pre-built release tarballs are not yet published. Build from source using the steps below.
-
 ```bash
-# Clone the repo and build a release
-git clone https://github.com/mgrusso/quadman.git
-cd quadman
-mix deps.get --only prod
-mix assets.deploy
-MIX_ENV=prod mix release
-
-# The tarball is at _build/prod/quadman-*.tar.gz
-tar -czf quadman.tar.gz -C _build/prod/rel/quadman .
+# Download the latest release
+curl -fsSL https://github.com/mgrusso/quadman/releases/latest/download/quadman-linux-x86_64.tar.gz -o quadman.tar.gz
 
 # Run the installer (creates user, dirs, systemd unit)
 curl -fsSL https://raw.githubusercontent.com/mgrusso/quadman/main/priv/deploy/install.sh | sudo bash

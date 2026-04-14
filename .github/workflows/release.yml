@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build release tarball
+    runs-on: ubuntu-latest
+
+    env:
+      MIX_ENV: prod
+      # Needed so mix release can write the tarball
+      SECRET_KEY_BASE: placeholder_not_used_at_build_time
+      DATABASE_PATH: /tmp/quadman.db
+      PHX_HOST: localhost
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Erlang/OTP and Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.17"
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: deps-${{ runner.os }}-${{ hashFiles('mix.lock') }}
+          restore-keys: deps-${{ runner.os }}-
+
+      - name: Cache build
+        uses: actions/cache@v4
+        with:
+          path: _build
+          key: build-${{ runner.os }}-${{ hashFiles('mix.lock') }}
+          restore-keys: build-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: mix deps.get --only prod
+
+      - name: Build assets
+        run: mix assets.deploy
+
+      - name: Build release
+        run: mix release
+
+      - name: Rename tarball to stable filename
+        run: mv _build/prod/quadman-*.tar.gz quadman-linux-x86_64.tar.gz
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: quadman-linux-x86_64.tar.gz
+          name: Quadman ${{ github.ref_name }}
+          generate_release_notes: true
