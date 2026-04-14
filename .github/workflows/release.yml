@@ -9,6 +9,8 @@ jobs:
   build:
     name: Build release tarball
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     env:
       MIX_ENV: prod
