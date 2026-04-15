@@ -3,10 +3,13 @@ defmodule QuadmanWeb.SettingsLive do
 
   alias Quadman.{Podman, Caddy, CaddyContainer, AppSettings, Updater}
 
+  @max_log_lines 500
+  @podman_candidates ~w(/usr/bin/podman /bin/podman /usr/local/bin/podman)
+
   @impl true
   def mount(_params, _session, socket) do
     registrations_enabled = AppSettings.get("registrations_enabled", "false") == "true"
-    caddy_enabled = AppSettings.get("caddy_enabled", "false") == "true"
+    caddy_tag = CaddyContainer.caddy_tag()
 
     {:ok,
      socket
@@ -16,14 +19,21 @@ defmodule QuadmanWeb.SettingsLive do
      |> assign(:latest_release, nil)
      |> assign(:podman_status, check_podman())
      |> assign(:registrations_enabled, registrations_enabled)
-     |> assign(:caddy_enabled, caddy_enabled)
+     |> assign(:caddy_tag, caddy_tag)
+     |> assign(:caddy_tag_input, caddy_tag)
+     |> assign(:caddy_log_lines, [])
+     |> assign(:caddy_log_buffer, "")
+     |> assign(:caddy_log_port, nil)
+     |> assign(:caddy_log_streaming, false)
      |> load_caddy_status()}
   end
 
   @impl true
   def handle_params(_params, _uri, socket), do: {:noreply, socket}
 
-  # --- Version / Updates ---
+  # ---------------------------------------------------------------------------
+  # Version / Updates
+  # ---------------------------------------------------------------------------
 
   def handle_event("check_updates", _params, socket) do
     socket = assign(socket, :update_state, :checking)
@@ -58,14 +68,17 @@ defmodule QuadmanWeb.SettingsLive do
     end
   end
 
-  # --- Podman ---
+  # ---------------------------------------------------------------------------
+  # Podman
+  # ---------------------------------------------------------------------------
 
-  @impl true
   def handle_event("check_podman", _params, socket) do
     {:noreply, assign(socket, :podman_status, check_podman())}
   end
 
-  # --- Registrations ---
+  # ---------------------------------------------------------------------------
+  # Registrations
+  # ---------------------------------------------------------------------------
 
   def handle_event("toggle_registrations", _params, socket) do
     new_val = if socket.assigns.registrations_enabled, do: "false", else: "true"
@@ -73,15 +86,9 @@ defmodule QuadmanWeb.SettingsLive do
     {:noreply, assign(socket, :registrations_enabled, new_val == "true")}
   end
 
-  # --- Caddy route management toggle ---
-
-  def handle_event("toggle_caddy_enabled", _params, socket) do
-    new_val = if socket.assigns.caddy_enabled, do: "false", else: "true"
-    AppSettings.put("caddy_enabled", new_val)
-    {:noreply, assign(socket, :caddy_enabled, new_val == "true")}
-  end
-
-  # --- Caddy container lifecycle ---
+  # ---------------------------------------------------------------------------
+  # Caddy container lifecycle
+  # ---------------------------------------------------------------------------
 
   def handle_event("deploy_caddy", _params, socket) do
     case CaddyContainer.deploy() do
@@ -93,6 +100,19 @@ defmodule QuadmanWeb.SettingsLive do
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Deploy failed: #{inspect(reason)}")}
+    end
+  end
+
+  def handle_event("redeploy_caddy", _params, socket) do
+    case CaddyContainer.redeploy() do
+      :ok ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Caddy redeployed.")
+         |> load_caddy_status()}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Redeploy failed: #{inspect(reason)}")}
     end
   end
 
@@ -116,8 +136,136 @@ defmodule QuadmanWeb.SettingsLive do
     {:noreply, load_caddy_status(socket)}
   end
 
+  def handle_event("set_caddy_tag", %{"tag" => tag}, socket) do
+    tag = String.trim(tag)
+
+    if tag != "" do
+      AppSettings.put("caddy_image_tag", tag)
+      {:noreply, assign(socket, :caddy_tag, tag) |> assign(:caddy_tag_input, tag)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("caddy_tag_input", %{"value" => val}, socket) do
+    {:noreply, assign(socket, :caddy_tag_input, val)}
+  end
+
   # ---------------------------------------------------------------------------
-  # Helpers
+  # Caddy log streaming
+  # ---------------------------------------------------------------------------
+
+  def handle_event("start_caddy_logs", _params, socket) do
+    {:noreply, start_caddy_log_stream(socket)}
+  end
+
+  def handle_event("stop_caddy_logs", _params, socket) do
+    {:noreply, stop_caddy_log_stream(socket)}
+  end
+
+  def handle_event("clear_caddy_logs", _params, socket) do
+    {:noreply, assign(socket, :caddy_log_lines, [])}
+  end
+
+  @impl true
+  def handle_info({port, {:data, data}}, %{assigns: %{caddy_log_port: port}} = socket) do
+    buffer = socket.assigns.caddy_log_buffer <> data
+    {complete, new_buffer} = split_buffer(buffer)
+    new_lines = Enum.reject(complete, &(&1 == ""))
+    lines = (socket.assigns.caddy_log_lines ++ new_lines) |> Enum.take(-@max_log_lines)
+    {:noreply, socket |> assign(:caddy_log_lines, lines) |> assign(:caddy_log_buffer, new_buffer)}
+  end
+
+  def handle_info({port, {:exit_status, _}}, %{assigns: %{caddy_log_port: port}} = socket) do
+    {:noreply,
+     socket
+     |> assign(:caddy_log_port, nil)
+     |> assign(:caddy_log_streaming, false)
+     |> assign(:caddy_log_buffer, "")}
+  end
+
+  def handle_info(_, socket), do: {:noreply, socket}
+
+  @impl true
+  def terminate(_reason, socket) do
+    stop_caddy_log_stream(socket)
+    :ok
+  end
+
+  # ---------------------------------------------------------------------------
+  # Log stream helpers
+  # ---------------------------------------------------------------------------
+
+  defp start_caddy_log_stream(socket) do
+    socket = stop_caddy_log_stream(socket)
+
+    case find_podman() do
+      nil ->
+        put_flash(socket, :error, "podman not found")
+
+      exe ->
+        env_cl = podman_env_cl()
+        args = ["logs", "--follow", "--names", "--tail", "200", "systemd-caddy"]
+        port_opts = [args: args, stderr_to_stdout: true, exit_status: true, env: env_cl]
+
+        port =
+          try do
+            Port.open({:spawn_executable, exe}, port_opts)
+          rescue
+            _ -> nil
+          end
+
+        if is_port(port) do
+          socket
+          |> assign(:caddy_log_port, port)
+          |> assign(:caddy_log_streaming, true)
+          |> assign(:caddy_log_buffer, "")
+        else
+          put_flash(socket, :error, "Could not open Caddy log stream.")
+        end
+    end
+  end
+
+  defp stop_caddy_log_stream(%{assigns: %{caddy_log_port: nil}} = socket), do: socket
+
+  defp stop_caddy_log_stream(%{assigns: %{caddy_log_port: port}} = socket) do
+    try do
+      Port.close(port)
+    rescue
+      _ -> :ok
+    end
+
+    socket
+    |> assign(:caddy_log_port, nil)
+    |> assign(:caddy_log_streaming, false)
+    |> assign(:caddy_log_buffer, "")
+  end
+
+  defp split_buffer(buffer) do
+    case String.split(buffer, "\n") do
+      [single] -> {[], single}
+      parts -> {Enum.drop(parts, -1), List.last(parts)}
+    end
+  end
+
+  defp find_podman do
+    System.find_executable("podman") ||
+      Enum.find(@podman_candidates, &File.exists?/1)
+  end
+
+  defp podman_env_cl do
+    home = System.get_env("HOME", "/opt/quadman")
+    {uid, _} = System.cmd("id", ["-u"])
+    uid = String.trim(uid)
+
+    [
+      {~c"HOME", to_charlist(home)},
+      {~c"XDG_RUNTIME_DIR", to_charlist("/run/user/#{uid}")}
+    ]
+  end
+
+  # ---------------------------------------------------------------------------
+  # Status helpers
   # ---------------------------------------------------------------------------
 
   defp load_caddy_status(socket) do
@@ -194,14 +342,11 @@ defmodule QuadmanWeb.SettingsLive do
                   <span class="w-2 h-2 bg-emerald-400 rounded-full"></span>
                   You're on the latest version.
                 </div>
-
               <% :update_available -> %>
                 <div class="space-y-3">
                   <div class="flex items-center justify-between">
-                    <div>
-                      <div class="text-sm text-white font-medium">
-                        Version <span class="font-mono">v<%= @latest_release.version %></span> available
-                      </div>
+                    <div class="text-sm text-white font-medium">
+                      Version <span class="font-mono">v<%= @latest_release.version %></span> available
                     </div>
                     <button
                       phx-click="perform_update"
@@ -217,18 +362,15 @@ defmodule QuadmanWeb.SettingsLive do
                     </div>
                   <% end %>
                 </div>
-
               <% :updating -> %>
                 <div class="text-sm text-gray-400 animate-pulse">
                   Downloading and applying update… The page will reconnect automatically when done.
                 </div>
-
               <% {:error, reason} -> %>
                 <div class="flex items-start gap-2 text-red-400 text-sm">
                   <span class="w-2 h-2 bg-red-400 rounded-full mt-1.5 flex-shrink-0"></span>
                   <span>Update check failed: <span class="font-mono text-xs"><%= reason %></span></span>
                 </div>
-
               <% _ -> %>
             <% end %>
           </div>
@@ -270,12 +412,12 @@ defmodule QuadmanWeb.SettingsLive do
         </div>
       </div>
 
-      <%!-- Caddy reverse proxy --%>
+      <%!-- Reverse Proxy (Caddy) --%>
       <div class="bg-gray-900 border border-gray-800 rounded-xl">
         <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800">
           <div>
-            <h2 class="font-semibold text-white">Caddy reverse proxy</h2>
-            <p class="text-xs text-gray-500 mt-0.5">Runs as a Podman container with host networking</p>
+            <h2 class="font-semibold text-white">Reverse Proxy</h2>
+            <p class="text-xs text-gray-500 mt-0.5">Caddy container — automatic HTTPS for all services</p>
           </div>
           <div class="flex items-center gap-3">
             <button phx-click="check_caddy" class="text-sm text-indigo-400 hover:text-indigo-300">Re-check</button>
@@ -283,15 +425,36 @@ defmodule QuadmanWeb.SettingsLive do
           </div>
         </div>
 
-        <div class="px-5 py-4 space-y-4">
+        <div class="px-5 py-4 space-y-5">
+          <%!-- Image tag --%>
+          <div>
+            <div class="text-xs text-gray-500 uppercase tracking-wide mb-2">Image tag</div>
+            <form phx-submit="set_caddy_tag" class="flex items-center gap-2">
+              <input
+                type="text"
+                name="tag"
+                value={@caddy_tag_input}
+                placeholder="2"
+                class="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-1.5 font-mono focus:outline-none focus:border-indigo-500 w-40"
+              />
+              <button
+                type="submit"
+                class="text-xs border border-gray-700 text-gray-300 hover:border-indigo-500 hover:text-indigo-400 rounded-lg px-3 py-1.5 transition-colors"
+              >
+                Save
+              </button>
+              <span class="text-xs text-gray-600">e.g. <span class="font-mono">2</span>, <span class="font-mono">2.9</span>, <span class="font-mono">alpine</span></span>
+            </form>
+          </div>
+
           <%!-- Container controls --%>
-          <div class="flex items-center gap-3">
+          <div class="flex items-center gap-3 border-t border-gray-800 pt-4">
             <%= if @caddy_container_status == :not_deployed do %>
               <button
                 phx-click="deploy_caddy"
                 class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors"
               >
-                Deploy Caddy container
+                Deploy Caddy
               </button>
             <% else %>
               <button
@@ -301,55 +464,93 @@ defmodule QuadmanWeb.SettingsLive do
                 Restart
               </button>
               <button
+                phx-click="redeploy_caddy"
+                data-confirm="Pull latest image and redeploy Caddy? It will be briefly unavailable."
+                class="border border-gray-700 text-gray-300 hover:border-indigo-500 hover:text-indigo-400 text-sm rounded-lg px-3 py-1.5 transition-colors"
+              >
+                Redeploy
+              </button>
+              <button
                 phx-click="undeploy_caddy"
-                data-confirm="Stop and remove the Caddy container?"
-                class="border border-gray-700 text-gray-300 hover:border-red-500 hover:text-red-400 text-sm rounded-lg px-3 py-1.5 transition-colors"
+                data-confirm="Stop and remove the Caddy container? Services will become unreachable."
+                class="border border-gray-700 text-gray-300 hover:border-red-700 hover:text-red-400 text-sm rounded-lg px-3 py-1.5 transition-colors"
               >
                 Undeploy
               </button>
             <% end %>
           </div>
 
-          <%!-- Route management toggle --%>
-          <%= if @caddy_container_status != :not_deployed do %>
-            <div class="flex items-center justify-between py-3 border-t border-gray-800">
-              <div>
-                <div class="text-sm text-white">Route management</div>
-                <div class="text-xs text-gray-500 mt-0.5">Automatically register service domains in Caddy on deploy</div>
-              </div>
-              <.toggle on={@caddy_enabled} event="toggle_caddy_enabled" />
-            </div>
+          <%!-- Admin API status --%>
+          <div class="border-t border-gray-800 pt-4">
+            <.connectivity_status status={@caddy_api_status} ok_label="Caddy Admin API reachable at localhost:2019" />
+          </div>
 
-            <%!-- API connectivity --%>
-            <div class="border-t border-gray-800 pt-3">
-              <.connectivity_status status={@caddy_api_status} ok_label="Caddy Admin API reachable at localhost:2019" />
-            </div>
-
-            <%!-- Active routes --%>
-            <%= if @caddy_routes != [] do %>
-              <div class="border-t border-gray-800 pt-3">
-                <div class="text-xs text-gray-500 mb-2 uppercase tracking-wide">Active routes managed by Quadman</div>
-                <div class="space-y-1">
-                  <%= for route <- @caddy_routes do %>
-                    <% id = Map.get(route, "@id", "") %>
-                    <%= if String.starts_with?(id, "quadman-") do %>
-                      <% hosts = get_in(route, ["match", Access.at(0), "host"]) || [] %>
-                      <% upstreams = get_in(route, ["handle", Access.at(0), "upstreams"]) || [] %>
-                      <div class="flex items-center justify-between bg-gray-800 rounded-lg px-3 py-2 text-xs font-mono">
-                        <span class="text-indigo-400"><%= Enum.join(hosts, ", ") %></span>
-                        <span class="text-gray-400">→ <%= Enum.map_join(upstreams, ", ", & &1["dial"]) %></span>
-                      </div>
-                    <% end %>
-                  <% end %>
-                </div>
+          <%!-- Active routes --%>
+          <%= if @caddy_routes != [] do %>
+            <div class="border-t border-gray-800 pt-4">
+              <div class="text-xs text-gray-500 mb-2 uppercase tracking-wide">Active routes</div>
+              <div class="space-y-1">
+                <%= for route <- @caddy_routes do %>
+                  <% id = Map.get(route, "@id", "") %>
+                  <% hosts = get_in(route, ["match", Access.at(0), "host"]) || [] %>
+                  <% upstreams = get_in(route, ["handle", Access.at(0), "upstreams"]) || [] %>
+                  <div class="flex items-center justify-between bg-gray-800 rounded-lg px-3 py-2 text-xs font-mono">
+                    <span class={if String.starts_with?(id, "quadman-"), do: "text-indigo-400", else: "text-gray-400"}>
+                      <%= Enum.join(hosts, ", ") %>
+                    </span>
+                    <span class="text-gray-500">→ <%= Enum.map_join(upstreams, ", ", & &1["dial"]) %></span>
+                  </div>
+                <% end %>
               </div>
-            <% end %>
-          <% else %>
-            <p class="text-sm text-gray-500">
-              Deploy the Caddy container to enable automatic HTTPS routing for your services.
-              Requires <span class="font-mono text-gray-300">net.ipv4.ip_unprivileged_port_start=80</span> on the host (set automatically by the install script).
-            </p>
+            </div>
           <% end %>
+
+          <%!-- Caddy log stream --%>
+          <div class="border-t border-gray-800 pt-4">
+            <div class="flex items-center justify-between mb-2">
+              <div class="text-xs text-gray-500 uppercase tracking-wide">Caddy logs</div>
+              <div class="flex items-center gap-2">
+                <button
+                  phx-click="clear_caddy_logs"
+                  class="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                >
+                  Clear
+                </button>
+                <%= if @caddy_log_streaming do %>
+                  <button
+                    phx-click="stop_caddy_logs"
+                    class="text-xs text-red-400 hover:text-red-300 border border-red-900 hover:border-red-700 px-2 py-1 rounded transition-colors"
+                  >
+                    Stop
+                  </button>
+                  <div class="flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
+                    <span class="text-xs text-emerald-400">Live</span>
+                  </div>
+                <% else %>
+                  <button
+                    phx-click="start_caddy_logs"
+                    class="text-xs text-indigo-400 hover:text-indigo-300 border border-indigo-800 hover:border-indigo-600 px-2 py-1 rounded transition-colors"
+                  >
+                    Stream
+                  </button>
+                <% end %>
+              </div>
+            </div>
+            <div
+              id="caddy-log-container"
+              phx-hook="LogStream"
+              class="bg-gray-950 rounded-lg p-3 font-mono text-xs leading-5 h-48 overflow-y-auto"
+            >
+              <%= if @caddy_log_lines == [] do %>
+                <span class="text-gray-600 italic">Click Stream to see Caddy logs (TLS certificates, requests, errors)…</span>
+              <% else %>
+                <%= for {line, idx} <- Enum.with_index(@caddy_log_lines) do %>
+                  <div id={"cl-#{idx}"} class={caddy_log_class(line)}><%= line %></div>
+                <% end %>
+              <% end %>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -359,6 +560,15 @@ defmodule QuadmanWeb.SettingsLive do
   # ---------------------------------------------------------------------------
   # Components
   # ---------------------------------------------------------------------------
+
+  defp caddy_log_class(line) do
+    cond do
+      String.match?(line, ~r/\b(error|ERROR|fatal|FATAL)\b/) -> "text-red-400 whitespace-pre-wrap break-all"
+      String.match?(line, ~r/\b(warn|WARN|warning)\b/) -> "text-yellow-400 whitespace-pre-wrap break-all"
+      String.match?(line, ~r/\b(tls|certificate|acme|obtained)\b/i) -> "text-emerald-400 whitespace-pre-wrap break-all"
+      true -> "text-gray-300 whitespace-pre-wrap break-all"
+    end
+  end
 
   defp toggle(assigns) do
     ~H"""

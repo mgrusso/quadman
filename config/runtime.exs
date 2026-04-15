@@ -58,6 +58,9 @@ if config_env() == :prod do
     http: [ip: {127, 0, 0, 1}, port: port],
     secret_key_base: secret_key_base
 
+  # Store host/port so CaddyContainer can write the Caddyfile at runtime
+  config :quadman, phx_host: host, phx_port: port
+
   config :quadman, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
   # In prod, use the real adapters (not stubs)

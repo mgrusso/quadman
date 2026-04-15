@@ -19,7 +19,9 @@ defmodule Quadman.Application do
       Quadman.StatusPoller,
       Quadman.PodmanStatsPoller,
       # Start to serve requests, typically the last entry
-      QuadmanWeb.Endpoint
+      QuadmanWeb.Endpoint,
+      # Auto-deploy Caddy reverse proxy after endpoint is up
+      {Task, fn -> caddy_autostart() end}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
@@ -39,5 +41,25 @@ defmodule Quadman.Application do
   defp skip_migrations?() do
     # Skip in dev (use mix ecto.migrate); run automatically in releases
     System.get_env("RELEASE_NAME") == nil
+  end
+
+  # Only auto-deploy Caddy in production releases, not in dev/test.
+  defp caddy_autostart do
+    if System.get_env("RELEASE_NAME") do
+      # Small delay to let the endpoint and DB fully settle
+      Process.sleep(2_000)
+
+      case Quadman.CaddyContainer.ensure_deployed() do
+        :ok -> :ok
+        {:error, reason} ->
+          require Logger
+          Logger.warning("Caddy auto-deploy failed: #{inspect(reason)}")
+      end
+
+      # Ensure caddy_enabled defaults to true
+      if Quadman.AppSettings.get("caddy_enabled") == nil do
+        Quadman.AppSettings.put("caddy_enabled", "true")
+      end
+    end
   end
 end

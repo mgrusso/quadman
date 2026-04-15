@@ -81,66 +81,63 @@ defmodule QuadmanWeb.ServiceLogsLive do
 
     tail_args = if tail == "all", do: [], else: ["--tail", tail]
 
-    # Try podman logs first (works for running or stopped containers).
-    # If that fails (container doesn't exist), fall back to journalctl using
-    # the lingering user session DBUS socket.
-    case open_podman_log_port(container_name, tail_args) do
-      {:ok, port} ->
-        socket |> assign(:port, port) |> assign(:streaming, true) |> assign(:buffer, "")
-
-      {:error, :no_podman} ->
+    case find_executable("podman") do
+      nil ->
         put_flash(socket, :error, "podman not found. Check server PATH.")
 
-      {:error, _} ->
-        case open_journalctl_port(service.name, tail_args) do
-          {:ok, port} ->
-            socket |> assign(:port, port) |> assign(:streaming, true) |> assign(:buffer, "")
+      exe ->
+        # Check whether the container exists at all before choosing the source.
+        # `podman inspect` exits 0 for any state (running, stopped, exited).
+        # If it exits non-zero, fall back to journalctl.
+        {_, code} =
+          System.cmd(exe, ["inspect", "--type", "container", container_name],
+            stderr_to_stdout: true,
+            env: podman_env_str())
 
-          _ ->
-            put_flash(socket, :error, "No logs available — container has not been created yet.")
+        if code == 0 do
+          # Container exists (running or stopped) — stream podman logs
+          args = ["logs", "--follow", "--names"] ++ tail_args ++ [container_name]
+
+          case open_port(exe, args) do
+            {:ok, port} ->
+              socket |> assign(:port, port) |> assign(:streaming, true) |> assign(:buffer, "")
+
+            _ ->
+              put_flash(socket, :error, "Could not open log stream.")
+          end
+        else
+          # Container never created — stream from journalctl user journal
+          open_journalctl_stream(socket, service.name, tail_args)
         end
     end
   end
 
-  defp open_podman_log_port(container_name, tail_args) do
-    case find_executable("podman") do
-      nil ->
-        {:error, :no_podman}
-
-      exe ->
-        args = ["logs", "--follow", "--names"] ++ tail_args ++ [container_name]
-        open_port(exe, args, env: podman_env())
-    end
-  end
-
-  defp open_journalctl_port(service_name, _tail_args) do
+  defp open_journalctl_stream(socket, service_name, _tail_args) do
     unit = "#{service_name}.service"
     exe = System.find_executable("journalctl") || "/usr/bin/journalctl"
     {uid, _} = System.cmd("id", ["-u"])
     uid = String.trim(uid)
 
-    env =
-      podman_env() ++
-        [
-          {"DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/#{uid}/bus"},
-          {"XDG_RUNTIME_DIR", "/run/user/#{uid}"}
-        ]
+    env_cl = [
+      {~c"HOME", to_charlist(System.get_env("HOME", "/opt/quadman"))},
+      {~c"XDG_RUNTIME_DIR", to_charlist("/run/user/#{uid}")},
+      {~c"DBUS_SESSION_BUS_ADDRESS", to_charlist("unix:path=/run/user/#{uid}/bus")}
+    ]
 
     args = ["--user-unit", unit, "--no-pager", "--follow", "--output", "short"]
-    open_port(exe, args, env: env)
+
+    case open_port(exe, args, env_cl) do
+      {:ok, port} ->
+        socket |> assign(:port, port) |> assign(:streaming, true) |> assign(:buffer, "")
+
+      _ ->
+        put_flash(socket, :error, "No logs available — service has not been started yet.")
+    end
   end
 
-  # Port.open expects env as charlists {name, val}.
-  defp open_port(exe, args, opts \\ []) do
-    env_cl =
-      case Keyword.get(opts, :env) do
-        nil -> []
-        env -> Enum.map(env, fn {k, v} -> {to_charlist(k), to_charlist(v)} end)
-      end
-
+  defp open_port(exe, args, env_cl \\ []) do
     port_opts =
       [args: args, stderr_to_stdout: true, exit_status: true] ++
-        Keyword.delete(opts, :env) ++
         if(env_cl != [], do: [env: env_cl], else: [])
 
     try do
@@ -151,8 +148,8 @@ defmodule QuadmanWeb.ServiceLogsLive do
     end
   end
 
-  # Podman needs HOME and XDG_RUNTIME_DIR to locate container storage.
-  defp podman_env do
+  # String env for System.cmd
+  defp podman_env_str do
     home = System.get_env("HOME", "/opt/quadman")
     {uid, _} = System.cmd("id", ["-u"])
     [{"HOME", home}, {"XDG_RUNTIME_DIR", "/run/user/#{String.trim(uid)}"}]
@@ -177,7 +174,7 @@ defmodule QuadmanWeb.ServiceLogsLive do
   end
 
   # ---------------------------------------------------------------------------
-  # Line helpers
+  # Helpers
   # ---------------------------------------------------------------------------
 
   defp split_buffer(buffer) do
