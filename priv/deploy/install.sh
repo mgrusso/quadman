@@ -195,7 +195,19 @@ else
   warn "Podman socket not yet visible at ${SOCKET_PATH} — it may appear after first login/linger activation."
 fi
 
-# 8. Quadman systemd service unit
+# 8. Sudoers rule — allows the quadman user to restart its own service
+# Required for the one-click update feature in the Settings UI.
+SUDOERS_FILE="/etc/sudoers.d/quadman"
+if [[ ! -f "${SUDOERS_FILE}" ]]; then
+  info "Installing sudoers rule for service restart..."
+  SYSTEMCTL_BIN="$(command -v systemctl)"
+  echo "${QUADMAN_USER} ALL=(ALL) NOPASSWD: ${SYSTEMCTL_BIN} restart quadman" > "${SUDOERS_FILE}"
+  chmod 440 "${SUDOERS_FILE}"
+else
+  info "Sudoers rule already exists at ${SUDOERS_FILE}, skipping."
+fi
+
+# 9. Quadman systemd service unit
 info "Installing quadman.service..."
 SCRIPT_DIR=""
 if [[ -n "${BASH_SOURCE[0]:-}" ]] && [[ "${BASH_SOURCE[0]}" != "bash" ]]; then

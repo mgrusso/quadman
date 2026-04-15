@@ -1,7 +1,7 @@
 defmodule QuadmanWeb.SettingsLive do
   use QuadmanWeb, :live_view
 
-  alias Quadman.{Podman, Caddy, CaddyContainer, AppSettings}
+  alias Quadman.{Podman, Caddy, CaddyContainer, AppSettings, Updater}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -11,6 +11,9 @@ defmodule QuadmanWeb.SettingsLive do
     {:ok,
      socket
      |> assign(:page_title, "Settings")
+     |> assign(:current_version, Updater.current_version())
+     |> assign(:update_state, :idle)
+     |> assign(:latest_release, nil)
      |> assign(:podman_status, check_podman())
      |> assign(:registrations_enabled, registrations_enabled)
      |> assign(:caddy_enabled, caddy_enabled)
@@ -19,6 +22,41 @@ defmodule QuadmanWeb.SettingsLive do
 
   @impl true
   def handle_params(_params, _uri, socket), do: {:noreply, socket}
+
+  # --- Version / Updates ---
+
+  def handle_event("check_updates", _params, socket) do
+    socket = assign(socket, :update_state, :checking)
+    send(self(), :do_check_updates)
+    {:noreply, socket}
+  end
+
+  def handle_event("perform_update", _params, socket) do
+    %{tarball_url: url} = socket.assigns.latest_release
+    socket = assign(socket, :update_state, :updating)
+    Task.start(fn -> Updater.download_and_apply(url) end)
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info(:do_check_updates, socket) do
+    case Updater.check_latest() do
+      {:ok, release} ->
+        available = Updater.update_available?(release.version)
+        state = if available, do: :update_available, else: :up_to_date
+
+        {:noreply,
+         socket
+         |> assign(:update_state, state)
+         |> assign(:latest_release, release)}
+
+      {:error, reason} ->
+        {:noreply,
+         socket
+         |> assign(:update_state, {:error, reason})
+         |> assign(:latest_release, nil)}
+    end
+  end
 
   # --- Podman ---
 
@@ -127,6 +165,75 @@ defmodule QuadmanWeb.SettingsLive do
     ~H"""
     <div class="p-8 max-w-3xl mx-auto">
       <h1 class="text-2xl font-bold text-white mb-6">Settings</h1>
+
+      <%!-- Version & updates --%>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl mb-6">
+        <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+          <div>
+            <h2 class="font-semibold text-white">Quadman</h2>
+            <p class="text-xs text-gray-500 mt-0.5">
+              Running version <span class="font-mono text-gray-300">v<%= @current_version %></span>
+            </p>
+          </div>
+          <%= if @update_state not in [:checking, :updating] do %>
+            <button phx-click="check_updates" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
+              Check for updates
+            </button>
+          <% else %>
+            <span class="text-sm text-gray-500 animate-pulse">
+              <%= if @update_state == :checking, do: "Checking…", else: "Updating…" %>
+            </span>
+          <% end %>
+        </div>
+
+        <%= if @update_state != :idle do %>
+          <div class="px-5 py-4">
+            <%= case @update_state do %>
+              <% :up_to_date -> %>
+                <div class="flex items-center gap-2 text-emerald-400 text-sm">
+                  <span class="w-2 h-2 bg-emerald-400 rounded-full"></span>
+                  You're on the latest version.
+                </div>
+
+              <% :update_available -> %>
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <div class="text-sm text-white font-medium">
+                        Version <span class="font-mono">v<%= @latest_release.version %></span> available
+                      </div>
+                    </div>
+                    <button
+                      phx-click="perform_update"
+                      data-confirm={"Update to v#{@latest_release.version}? Quadman will restart automatically."}
+                      class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors"
+                    >
+                      Update now
+                    </button>
+                  </div>
+                  <%= if @latest_release.notes != "" do %>
+                    <div class="text-xs text-gray-400 bg-gray-800 rounded-lg px-3 py-2 font-mono whitespace-pre-wrap leading-relaxed">
+                      <%= @latest_release.notes %>
+                    </div>
+                  <% end %>
+                </div>
+
+              <% :updating -> %>
+                <div class="text-sm text-gray-400 animate-pulse">
+                  Downloading and applying update… The page will reconnect automatically when done.
+                </div>
+
+              <% {:error, reason} -> %>
+                <div class="flex items-start gap-2 text-red-400 text-sm">
+                  <span class="w-2 h-2 bg-red-400 rounded-full mt-1.5 flex-shrink-0"></span>
+                  <span>Update check failed: <span class="font-mono text-xs"><%= reason %></span></span>
+                </div>
+
+              <% _ -> %>
+            <% end %>
+          </div>
+        <% end %>
+      </div>
 
       <%!-- System config --%>
       <div class="bg-gray-900 border border-gray-800 rounded-xl mb-6">
