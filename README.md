@@ -73,22 +73,22 @@ Browser ──HTTPS──► Caddy ──► Quadman (Phoenix/LiveView, port 400
 ## Quick install (Linux)
 
 ```bash
-# Download the latest release
-curl -fsSL https://github.com/mgrusso/quadman/releases/latest/download/quadman-linux-x86_64.tar.gz -o quadman.tar.gz
-
-# Run the installer (creates user, dirs, systemd unit, sets sysctl for Caddy)
+# 1. Run the installer
+#    Creates the quadman system user, directories, sysctl rule (ports 80/443),
+#    sudoers entry, subUID/subGID ranges, and the systemd unit.
 curl -fsSL https://raw.githubusercontent.com/mgrusso/quadman/main/priv/deploy/install.sh | sudo bash
 
-# Extract the release
-sudo tar -xzf quadman.tar.gz -C /opt/quadman/
+# 2. Download and extract the latest release
+curl -fsSL https://github.com/mgrusso/quadman/releases/latest/download/quadman-linux-x86_64.tar.gz \
+  | sudo tar -xzf - -C /opt/quadman/
 
-# Edit the env file (set PHX_HOST at minimum)
+# 3. Re-run install to register the service file from the extracted release
+curl -fsSL https://raw.githubusercontent.com/mgrusso/quadman/main/priv/deploy/install.sh | sudo bash
+
+# 4. Edit the env file — set PHX_HOST to your domain at minimum
 sudo nano /etc/quadman/env
 
-# Run migrations
-sudo -u quadman /opt/quadman/bin/quadman eval "Quadman.Release.migrate()"
-
-# Start
+# 5. Start (database migrations run automatically on first boot)
 sudo systemctl enable --now quadman
 ```
 
@@ -99,6 +99,37 @@ Quadman has no pre-seeded accounts. On a fresh install, navigate to `https://<yo
 **Enabling or disabling user registration**
 
 Once logged in, go to **Settings → User Registration** and toggle the switch. When disabled, the `/register` page shows a "registrations are currently disabled" notice and no account can be created. When enabled, any visitor can register a new account — turn this off again once your users are set up.
+
+---
+
+## Uninstall
+
+To completely remove Quadman and all its data from the server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mgrusso/quadman/main/priv/deploy/uninstall.sh | sudo bash
+```
+
+The script will ask you to type `yes` before doing anything. It removes:
+
+- The `quadman` systemd service (stopped and disabled)
+- The Podman socket and all user-session container units for the `quadman` user
+- `/opt/quadman` — release binaries
+- `/var/lib/quadman` — database and persistent data (including Caddy data)
+- `/etc/quadman` — configuration and env file
+- `/etc/systemd/system/quadman.service`
+- `/etc/sudoers.d/quadman`
+- `/etc/sysctl.d/99-quadman.conf`
+- The `quadman` subUID/subGID entries from `/etc/subuid` and `/etc/subgid`
+- The `quadman` system user
+
+Podman itself is **not** removed — only the Quadman-managed infrastructure.
+
+If you used a non-default user or install directory, pass the same flags you gave to `install.sh`:
+
+```bash
+curl -fsSL .../uninstall.sh | sudo bash -s -- --user myuser --dir /srv/quadman
+```
 
 ---
 
