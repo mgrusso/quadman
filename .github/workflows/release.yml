@@ -54,7 +54,12 @@ jobs:
           mix release
 
       - name: Rename tarball to stable filename
-        run: mv _build/prod/quadman-*.tar.gz quadman-linux-x86_64.tar.gz
+        run: |
+          echo "=== _build/prod/ contents ==="
+          ls -la _build/prod/ || true
+          TARBALL=$(find _build/prod -maxdepth 1 -name "quadman-*.tar.gz" | head -1)
+          echo "Found tarball: $TARBALL"
+          mv "$TARBALL" quadman-linux-x86_64.tar.gz
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
