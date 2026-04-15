@@ -19,16 +19,39 @@ defmodule Quadman.Podman do
   end
 
   @doc """
-  Pull an image. Streams output but we just wait for completion.
+  Pull an image. The Podman pull endpoint streams newline-delimited JSON and
+  always returns HTTP 200 — even on failure. We scan each JSON line for an
+  `"error"` key to detect real failures.
   Returns `:ok` or `{:error, reason}`.
   """
   def pull_image(image) do
     case Req.post(base_req(), url: "/images/pull", params: [reference: image]) do
-      {:ok, %{status: status}} when status in 200..299 -> :ok
-      {:ok, %{status: status, body: body}} -> {:error, "pull failed #{status}: #{inspect(body)}"}
-      {:error, reason} -> {:error, "pull request error: #{inspect(reason)}"}
+      {:ok, %{status: status, body: body}} when status in 200..299 ->
+        check_pull_stream(body)
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, "pull failed #{status}: #{inspect(body)}"}
+
+      {:error, reason} ->
+        {:error, "pull request error: #{inspect(reason)}"}
     end
   end
+
+  # The body is either a binary of newline-delimited JSON or already decoded.
+  defp check_pull_stream(body) when is_binary(body) do
+    body
+    |> String.split("\n", trim: true)
+    |> Enum.find_value(:ok, fn line ->
+      case Jason.decode(line) do
+        {:ok, %{"error" => err}} -> {:error, "pull error: #{err}"}
+        _ -> nil
+      end
+    end)
+  end
+
+  # Req may decode a single JSON object if Content-Type is application/json
+  defp check_pull_stream(%{"error" => err}), do: {:error, "pull error: #{err}"}
+  defp check_pull_stream(_), do: :ok
 
   @doc """
   Inspect an image and return its digest.

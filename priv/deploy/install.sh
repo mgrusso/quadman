@@ -119,6 +119,21 @@ fi
 QUADMAN_UID="$(id -u "${QUADMAN_USER}")"
 QUADMAN_HOME="$(getent passwd "${QUADMAN_USER}" | cut -d: -f6)"
 
+# 2b. subUID / subGID — required for rootless Podman to map container UIDs
+# Without these, images with non-root files (e.g. vaultwarden) fail to pull.
+if ! grep -q "^${QUADMAN_USER}:" /etc/subuid 2>/dev/null; then
+  info "Adding subUID range for '${QUADMAN_USER}'..."
+  echo "${QUADMAN_USER}:100000:65536" >> /etc/subuid
+else
+  info "subUID already configured for '${QUADMAN_USER}'."
+fi
+if ! grep -q "^${QUADMAN_USER}:" /etc/subgid 2>/dev/null; then
+  info "Adding subGID range for '${QUADMAN_USER}'..."
+  echo "${QUADMAN_USER}:100000:65536" >> /etc/subgid
+else
+  info "subGID already configured for '${QUADMAN_USER}'."
+fi
+
 # 3. Directories
 info "Creating directories..."
 install -d -m 755 -o "${QUADMAN_USER}" -g "${QUADMAN_USER}" "${INSTALL_DIR}"
