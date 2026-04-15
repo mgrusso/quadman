@@ -126,16 +126,28 @@ loginctl enable-linger "${QUADMAN_USER}"
 QUADMAN_UID="$(id -u "${QUADMAN_USER}")"
 
 # 7. Install systemd service unit
+# Try to find the service file — works when run from a local clone or extracted release.
+# When piped via curl, the release tarball will install it after extraction.
 info "Installing quadman.service..."
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SERVICE_SRC="${SCRIPT_DIR}/quadman.service"
+SCRIPT_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" ]] && [[ "${BASH_SOURCE[0]}" != "bash" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+SERVICE_SRC="${SCRIPT_DIR:+${SCRIPT_DIR}/}quadman.service"
+
+# Also check inside an already-extracted release
+RELEASE_SERVICE="$(find "${INSTALL_DIR}" -name "quadman.service" 2>/dev/null | head -1)"
 
 if [[ -f "${SERVICE_SRC}" ]]; then
   sed "s|REPLACE_WITH_UID|${QUADMAN_UID}|g" "${SERVICE_SRC}" \
     > /etc/systemd/system/quadman.service
+elif [[ -n "${RELEASE_SERVICE}" ]]; then
+  sed "s|REPLACE_WITH_UID|${QUADMAN_UID}|g" "${RELEASE_SERVICE}" \
+    > /etc/systemd/system/quadman.service
+  info "Installed quadman.service from release tarball."
 else
-  warn "quadman.service template not found at ${SERVICE_SRC}."
-  warn "Download and install it manually from the Quadman release."
+  warn "quadman.service not found — extract the release first, then re-run this script,"
+  warn "or install the service file manually from the release tarball."
 fi
 
 systemctl daemon-reload
