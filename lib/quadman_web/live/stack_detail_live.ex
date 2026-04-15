@@ -15,7 +15,8 @@ defmodule QuadmanWeb.StackDetailLive do
      |> assign(:page_title, stack.name)
      |> assign(:stack, stack)
      |> assign(:all_services, all_services)
-     |> assign(:unassigned_services, unassigned(all_services, stack))}
+     |> assign(:unassigned_services, unassigned(all_services, stack))
+     |> assign(:confirm_delete_stack, false)}
   end
 
   @impl true
@@ -51,6 +52,24 @@ defmodule QuadmanWeb.StackDetailLive do
      socket
      |> assign(:stack, stack)
      |> assign(:unassigned_services, unassigned(all_services, stack))}
+  end
+
+  def handle_event("confirm_delete_stack", _params, socket) do
+    {:noreply, assign(socket, :confirm_delete_stack, true)}
+  end
+
+  def handle_event("cancel_delete_stack", _params, socket) do
+    {:noreply, assign(socket, :confirm_delete_stack, false)}
+  end
+
+  def handle_event("delete_stack", _params, socket) do
+    stack = socket.assigns.stack
+    {:ok, _} = Stacks.delete_stack(stack)
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Stack \"#{stack.name}\" deleted.")
+     |> push_navigate(to: ~p"/stacks")}
   end
 
   def handle_event("remove_service", %{"service_id" => svc_id}, socket) do
@@ -94,13 +113,32 @@ defmodule QuadmanWeb.StackDetailLive do
           <.status_badge status={Stacks.compute_stack_status(@stack)} />
         </div>
 
-        <button
-          phx-click="deploy_all"
-          disabled={@stack.services == []}
-          class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-        >
-          Deploy all
-        </button>
+        <div class="flex items-center gap-2">
+          <%= if @confirm_delete_stack do %>
+            <span class="text-sm text-gray-400">Delete stack?</span>
+            <button phx-click="delete_stack" class="text-sm text-red-400 border border-red-700 hover:border-red-500 px-3 py-1.5 rounded-lg transition-colors">
+              Yes, delete
+            </button>
+            <button phx-click="cancel_delete_stack" class="text-sm text-gray-400 hover:text-white px-2 py-1.5">
+              Cancel
+            </button>
+          <% else %>
+            <button
+              phx-click="confirm_delete_stack"
+              class="text-sm text-red-500 hover:text-red-400 border border-red-900 hover:border-red-700 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              Delete stack
+            </button>
+          <% end %>
+
+          <button
+            phx-click="deploy_all"
+            disabled={@stack.services == []}
+            class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+          >
+            Deploy all
+          </button>
+        </div>
       </div>
 
       <%!-- Services in stack --%>

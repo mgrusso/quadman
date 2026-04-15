@@ -17,7 +17,10 @@ defmodule QuadmanWeb.ServiceDetailLive do
      |> assign(:env_vars, service.environment_variables)
      |> assign(:new_env_form, new_env_form())
      |> assign(:domain_form, to_form(%{"domain" => service.domain || ""}))
-     |> assign(:action_loading, nil)}
+     |> assign(:action_loading, nil)
+     |> assign(:show_edit, false)
+     |> assign(:edit_form, build_edit_form(service))
+     |> assign(:confirm_delete, false)}
   end
 
   @impl true
@@ -112,6 +115,89 @@ defmodule QuadmanWeb.ServiceDetailLive do
          |> assign(:action_loading, nil)
          |> put_flash(:error, "Failed to queue deploy: #{inspect(reason)}")}
     end
+  end
+
+  # --- Edit config ---
+
+  def handle_event("toggle_edit", _params, socket) do
+    {:noreply, assign(socket, :show_edit, !socket.assigns.show_edit)}
+  end
+
+  def handle_event("save_config", %{"config" => params}, socket) do
+    service = socket.assigns.service
+
+    port_mappings = parse_lines(params["port_mappings"] || "")
+    volumes = parse_lines(params["volumes"] || "")
+
+    attrs = %{
+      image: String.trim(params["image"] || ""),
+      port_mappings: port_mappings,
+      volumes: volumes
+    }
+
+    case Services.update_service(service, attrs) do
+      {:ok, updated} ->
+        {:noreply,
+         socket
+         |> assign(:service, Services.get_service_with_env!(updated.id))
+         |> assign(:show_edit, false)
+         |> assign(:edit_form, build_edit_form(updated))
+         |> put_flash(:info, "Configuration saved. Deploy to apply changes.")}
+
+      {:error, changeset} ->
+        errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, _} -> msg end)
+        {:noreply, put_flash(socket, :error, "Save failed: #{inspect(errors)}")}
+    end
+  end
+
+  # --- Auto-update toggle ---
+
+  def handle_event("toggle_auto_update", _params, socket) do
+    service = socket.assigns.service
+    new_val = !service.auto_update
+
+    {:ok, updated} = Services.update_service(service, %{auto_update: new_val})
+
+    {:noreply,
+     socket
+     |> assign(:service, updated)
+     |> put_flash(:info, if(new_val, do: "Auto-update enabled.", else: "Auto-update disabled."))}
+  end
+
+  # --- Delete service ---
+
+  def handle_event("confirm_delete", _params, socket) do
+    {:noreply, assign(socket, :confirm_delete, true)}
+  end
+
+  def handle_event("cancel_delete", _params, socket) do
+    {:noreply, assign(socket, :confirm_delete, false)}
+  end
+
+  def handle_event("delete_service", _params, socket) do
+    service = socket.assigns.service
+
+    # Stop and clean up the systemd unit + quadlet file
+    if service.unit_name do
+      Systemd.stop(service.unit_name)
+    end
+
+    if service.quadlet_path && File.exists?(service.quadlet_path) do
+      File.rm(service.quadlet_path)
+      Systemd.daemon_reload()
+    end
+
+    # Remove Caddy route if set
+    if service.domain do
+      Caddy.remove_route(service.domain)
+    end
+
+    Services.delete_service(service)
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Service \"#{service.name}\" deleted.")
+     |> push_navigate(to: ~p"/services")}
   end
 
   # --- Env var management ---
@@ -225,6 +311,21 @@ defmodule QuadmanWeb.ServiceDetailLive do
     to_form(EnvironmentVariable.changeset(%EnvironmentVariable{}, %{}), as: :environment_variable)
   end
 
+  defp build_edit_form(service) do
+    %{
+      "image" => service.image || "",
+      "port_mappings" => Enum.join(service.port_mappings, "\n"),
+      "volumes" => Enum.join(service.volumes, "\n")
+    }
+  end
+
+  defp parse_lines(text) do
+    text
+    |> String.split("\n")
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -290,12 +391,114 @@ defmodule QuadmanWeb.ServiceDetailLive do
       </div>
 
       <%!-- Info grid --%>
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
         <.info_card label="Restart policy" value={@service.restart_policy} />
         <.info_card label="CPU limit" value={@service.resource_cpu || "—"} />
         <.info_card label="Memory limit" value={@service.resource_mem || "—"} />
         <.info_card label="Unit name" value={@service.unit_name || "not deployed"} mono={true} />
       </div>
+
+      <%!-- Auto-update + Edit/Delete controls --%>
+      <div class="flex items-center justify-between mb-8">
+        <label class="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={@service.auto_update}
+            phx-click="toggle_auto_update"
+            class="rounded border-gray-600 bg-gray-800 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-gray-900"
+          />
+          <span class="text-sm text-gray-400">
+            Auto-update image every 4 hours
+          </span>
+        </label>
+
+        <div class="flex items-center gap-2">
+          <button
+            phx-click="toggle_edit"
+            class="text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-600 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <%= if @show_edit, do: "Cancel edit", else: "Edit config" %>
+          </button>
+          <%= if @confirm_delete do %>
+            <span class="text-sm text-gray-400">Are you sure?</span>
+            <button
+              phx-click="delete_service"
+              class="text-sm text-red-400 border border-red-700 hover:border-red-500 hover:text-red-300 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              Yes, delete
+            </button>
+            <button
+              phx-click="cancel_delete"
+              class="text-sm text-gray-400 hover:text-white px-2 py-1.5"
+            >
+              Cancel
+            </button>
+          <% else %>
+            <button
+              phx-click="confirm_delete"
+              class="text-sm text-red-500 hover:text-red-400 border border-red-900 hover:border-red-700 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              Delete
+            </button>
+          <% end %>
+        </div>
+      </div>
+
+      <%!-- Edit config form --%>
+      <%= if @show_edit do %>
+        <div class="bg-gray-900 border border-indigo-800 rounded-xl p-5 mb-8">
+          <h3 class="text-sm font-semibold text-white mb-4">Edit configuration</h3>
+          <p class="text-xs text-gray-500 mb-4">Save changes then click Deploy to apply them to the running container.</p>
+          <form phx-submit="save_config" class="space-y-4">
+            <div>
+              <label class="block text-xs text-gray-400 mb-1">Image</label>
+              <input
+                type="text"
+                name="config[image]"
+                value={@edit_form["image"]}
+                required
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+                placeholder="docker.io/nginx:latest"
+              />
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">Port Mappings (one per line)</label>
+                <textarea
+                  name="config[port_mappings]"
+                  rows="4"
+                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none"
+                  placeholder={"8080:80\n443:443"}
+                ><%= @edit_form["port_mappings"] %></textarea>
+              </div>
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">Volumes (one per line)</label>
+                <textarea
+                  name="config[volumes]"
+                  rows="4"
+                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none"
+                  placeholder={"/data/app:/app/data"}
+                ><%= @edit_form["volumes"] %></textarea>
+              </div>
+            </div>
+            <div class="flex justify-end gap-2">
+              <button
+                type="button"
+                phx-click="toggle_edit"
+                class="text-sm text-gray-400 hover:text-white px-4 py-2"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors"
+              >
+                Save changes
+              </button>
+            </div>
+          </form>
+        </div>
+      <% end %>
 
       <%!-- Domain / Caddy --%>
       <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-8">
