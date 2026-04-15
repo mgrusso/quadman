@@ -26,6 +26,12 @@ defmodule Quadman.Services do
     |> Repo.get!(id)
   end
 
+  def get_service_with_env(id) do
+    Service
+    |> preload(:environment_variables)
+    |> Repo.get(id)
+  end
+
   def create_service(attrs) do
     %Service{}
     |> Service.changeset(attrs)

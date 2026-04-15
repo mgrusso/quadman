@@ -6,7 +6,19 @@ defmodule QuadmanWeb.ServiceDetailLive do
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
-    service = Services.get_service_with_env!(id)
+    case Services.get_service_with_env(id) do
+      nil ->
+        {:ok,
+         socket
+         |> put_flash(:error, "Service not found.")
+         |> push_navigate(to: ~p"/services")}
+
+      service ->
+        mount_service(service, id, socket)
+    end
+  end
+
+  defp mount_service(service, id, socket) do
     Phoenix.PubSub.subscribe(Quadman.PubSub, "services:status")
 
     {:ok,
@@ -297,8 +309,12 @@ defmodule QuadmanWeb.ServiceDetailLive do
         end
 
       if new_status != service.status do
-        {:ok, updated} = Services.update_service_status(service, new_status)
-        {:noreply, assign(socket, :service, Map.put(service, :status, updated.status))}
+        case Services.update_service_status(service, new_status) do
+          {:ok, updated} ->
+            {:noreply, assign(socket, :service, Map.put(service, :status, updated.status))}
+          {:error, _} ->
+            {:noreply, socket}
+        end
       else
         {:noreply, socket}
       end
