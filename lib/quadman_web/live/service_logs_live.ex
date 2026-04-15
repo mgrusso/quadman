@@ -98,7 +98,7 @@ defmodule QuadmanWeb.ServiceLogsLive do
           # Container exists (running or stopped) — stream podman logs
           args = ["logs", "--follow", "--names"] ++ tail_args ++ [container_name]
 
-          case open_port(exe, args, port_env()) do
+          case open_port(exe, args) do
             {:ok, port} ->
               socket |> assign(:port, port) |> assign(:streaming, true) |> assign(:buffer, "")
 
@@ -124,7 +124,7 @@ defmodule QuadmanWeb.ServiceLogsLive do
 
     args = ["--user-unit", unit, "--no-pager", "--follow", "--output", "short"]
 
-    case open_port(exe, args, port_env(extra)) do
+    case open_port(exe, args, extra) do
       {:ok, port} ->
         socket |> assign(:port, port) |> assign(:streaming, true) |> assign(:buffer, "")
 
@@ -133,35 +133,42 @@ defmodule QuadmanWeb.ServiceLogsLive do
     end
   end
 
-  # Build a full Port env: current OS environment merged with required podman overrides.
-  # Port.open replaces the entire env when env: is specified, so we must include everything.
-  defp port_env(extra \\ %{}) do
-    {uid, _} = System.cmd("id", ["-u"])
-    uid = String.trim(uid)
+  defp open_port(exe, args, extra_env \\ %{}) do
+    # The quadman systemd process already has HOME=/opt/quadman and XDG_RUNTIME_DIR set.
+    # We inherit that env (no env: override) and only set cd: so podman can chdir.
+    # If extra_env is provided (e.g. DBUS_SESSION_BUS_ADDRESS for journalctl), we
+    # use a shell wrapper to inject just those vars without replacing the whole env.
+    port_opts =
+      if map_size(extra_env) == 0 do
+        [args: args, stderr_to_stdout: true, exit_status: true, cd: "/opt/quadman"]
+      else
+        env_str = Enum.map_join(extra_env, " ", fn {k, v} -> "#{k}=#{v}" end)
+        shell_cmd = "#{env_str} #{exe} #{Enum.map_join(args, " ", &shell_escape/1)}"
+        [args: ["-c", shell_cmd], stderr_to_stdout: true, exit_status: true, cd: "/opt/quadman"]
+      end
 
-    overrides = Map.merge(%{
-      "HOME"            => "/opt/quadman",
-      "XDG_RUNTIME_DIR" => "/run/user/#{uid}"
-    }, extra)
+    {actual_exe, port_opts} =
+      if map_size(extra_env) == 0 do
+        {exe, port_opts}
+      else
+        {"/bin/sh", port_opts}
+      end
 
-    System.get_env()
-    |> Map.merge(overrides)
-    |> Enum.map(fn {k, v} -> {to_charlist(k), to_charlist(v)} end)
-  end
-
-  defp open_port(exe, args, env_cl) do
-    port_opts = [args: args, stderr_to_stdout: true, exit_status: true,
-                 cd: "/opt/quadman", env: env_cl]
+    require Logger
 
     try do
-      port = Port.open({:spawn_executable, exe}, port_opts)
-      if is_port(port), do: {:ok, port}, else: {:error, :failed}
+      port = Port.open({:spawn_executable, actual_exe}, port_opts)
+      if is_port(port), do: {:ok, port}, else: {:error, :not_a_port}
     rescue
-      e -> {:error, e}
+      e ->
+        Logger.error("Port.open failed for #{exe}: #{inspect(e)}")
+        {:error, e}
     end
   end
 
-  # String env for System.cmd — System.cmd merges with current env, so just the overrides
+  defp shell_escape(s), do: "'#{String.replace(s, "'", "'\\''")}'"
+
+  # String env for System.cmd (inspect check) — System.cmd merges, so just overrides needed
   defp podman_env_str do
     {uid, _} = System.cmd("id", ["-u"])
     [{"HOME", "/opt/quadman"}, {"XDG_RUNTIME_DIR", "/run/user/#{String.trim(uid)}"}]

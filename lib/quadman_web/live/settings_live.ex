@@ -206,7 +206,7 @@ defmodule QuadmanWeb.SettingsLive do
       exe ->
         args = ["logs", "--follow", "--names", "--tail", "200", "systemd-caddy"]
         port_opts = [args: args, stderr_to_stdout: true, exit_status: true,
-                     cd: "/opt/quadman", env: port_env()]
+                     cd: "/opt/quadman"]
 
         port =
           try do
@@ -251,22 +251,6 @@ defmodule QuadmanWeb.SettingsLive do
   defp find_podman do
     System.find_executable("podman") ||
       Enum.find(@podman_candidates, &File.exists?/1)
-  end
-
-  # Build a full Port env: current OS environment merged with required podman overrides.
-  # Port.open replaces the entire env when env: is specified, so we must include everything.
-  defp port_env do
-    {uid, _} = System.cmd("id", ["-u"])
-    uid = String.trim(uid)
-
-    overrides = %{
-      "HOME"            => "/opt/quadman",
-      "XDG_RUNTIME_DIR" => "/run/user/#{uid}"
-    }
-
-    System.get_env()
-    |> Map.merge(overrides)
-    |> Enum.map(fn {k, v} -> {to_charlist(k), to_charlist(v)} end)
   end
 
   # ---------------------------------------------------------------------------
