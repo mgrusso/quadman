@@ -99,7 +99,6 @@ defmodule Quadman.Quadlets do
     <% end %><%= for vol <- @service.volumes do %>Volume=<%= vol %>
     <% end %><%= for env <- @public_env do %>Environment=<%= env.key %>=<%= env.value %>
     <% end %><%= if @has_secrets do %>EnvironmentFile=<%= @secret_file %>
-    <% end %><%= if @stack_name do %>Pod=<%= @stack_name %>.pod
     <% end %>AutoUpdate=registry
 
     [Service]

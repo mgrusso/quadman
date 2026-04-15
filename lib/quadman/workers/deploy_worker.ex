@@ -88,12 +88,6 @@ defmodule Quadman.Workers.DeployWorker do
     log.("Writing Quadlet files...", "info")
     env_vars = service.environment_variables
 
-    stack_name =
-      if service.stack_id do
-        stack = Quadman.Stacks.get_stack!(service.stack_id)
-        stack.name
-      end
-
     # Create host-side volume directories if they don't exist yet
     Enum.each(service.volumes, fn mapping ->
       host_path = mapping |> String.split(":") |> List.first()
@@ -106,7 +100,7 @@ defmodule Quadman.Workers.DeployWorker do
     end)
 
     with :ok <- Quadlets.write_secrets(service, env_vars),
-         {:ok, path} <- Quadlets.write_container(service, env_vars, stack_name) do
+         {:ok, path} <- Quadlets.write_container(service, env_vars) do
       unit_name = Quadlets.unit_name(service.name)
 
       Services.update_service(service, %{quadlet_path: path, unit_name: unit_name})
