@@ -140,7 +140,7 @@ defmodule QuadmanWeb.ServiceLogsLive do
     # use a shell wrapper to inject just those vars without replacing the whole env.
     port_opts =
       if map_size(extra_env) == 0 do
-        [:stderr_to_stdout, :exit_status, args: args, cd: "/opt/quadman"]
+        [:binary, :stderr_to_stdout, :exit_status, args: args, cd: "/opt/quadman"]
       else
         env_str = Enum.map_join(extra_env, " ", fn {k, v} -> "#{k}=#{v}" end)
         shell_cmd = "#{env_str} #{exe} #{Enum.map_join(args, " ", &shell_escape/1)}"

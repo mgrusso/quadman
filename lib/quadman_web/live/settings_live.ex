@@ -205,7 +205,7 @@ defmodule QuadmanWeb.SettingsLive do
 
       exe ->
         args = ["logs", "--follow", "--names", "--tail", "200", "systemd-caddy"]
-        port_opts = [:stderr_to_stdout, :exit_status, args: args, cd: "/opt/quadman"]
+        port_opts = [:binary, :stderr_to_stdout, :exit_status, args: args, cd: "/opt/quadman"]
 
         port =
           try do
