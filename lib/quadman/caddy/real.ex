@@ -102,12 +102,21 @@ defmodule Quadman.Caddy.Real do
 
   defp ensure_http_server do
     case Req.get(base_req(), url: "/config/apps/http/servers/#{@server_name}") do
-      {:ok, %{status: 200}} ->
+      {:ok, %{status: 200, body: server}} ->
+        # Server exists — ensure it has TLS connection policies so Caddy
+        # terminates TLS and provisions certs via auto-HTTPS for all routes.
+        if is_map(server) && !Map.has_key?(server, "tls_connection_policies") do
+          Logger.info("Caddy: patching missing tls_connection_policies on #{@server_name}")
+          Req.put(base_req(),
+            url: "/config/apps/http/servers/#{@server_name}/tls_connection_policies",
+            json: [%{}]
+          )
+        end
         :ok
 
       {:ok, %{status: 404}} ->
         Logger.info("Caddy: bootstrapping server #{@server_name}")
-        server = %{"listen" => [":80", ":443"], "routes" => []}
+        server = %{"listen" => [":443"], "tls_connection_policies" => [%{}], "routes" => []}
         bootstrap_server(server)
 
       {:ok, %{status: s, body: b}} ->

@@ -114,16 +114,13 @@ defmodule Quadman.CaddyContainer do
   end
 
   defp write_caddyfile(path) do
-    host = Application.get_env(:quadman, :phx_host, System.get_env("PHX_HOST", "localhost"))
-    port = Application.get_env(:quadman, :phx_port, 4000)
-
+    # Minimal Caddyfile — just the admin endpoint.
+    # All routing (including the Quadman UI itself) is managed via the Admin API
+    # by Quadman on startup, so there is only one HTTP server ("quadman_services")
+    # and no srv0 conflict over port 443.
     caddyfile = """
     {
         admin localhost:2019
-    }
-
-    #{host} {
-        reverse_proxy 127.0.0.1:#{port}
     }
     """
 
