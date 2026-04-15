@@ -154,17 +154,29 @@ defmodule Quadman.Caddy.Real do
   end
 
   # Add route to array, deduplicating by @id first to prevent duplicate errors.
+  # Uses POST when the routes array already exists (replaces in-place),
+  # falls back to PUT when the array doesn't exist yet (creates it).
   defp add_route_to_array(id, route, upstream) do
-    current = fetch_routes()
-    deduped = Enum.reject(current, &(Map.get(&1, "@id") == id))
+    url = routes_url()
 
-    case Req.put(base_req(), url: routes_url(), json: deduped ++ [route]) do
+    {current, method} =
+      case Req.get(base_req(), url: url) do
+        {:ok, %{status: 200, body: list}} when is_list(list) -> {list, :post}
+        _ -> {[], :put}
+      end
+
+    deduped = Enum.reject(current, &(Map.get(&1, "@id") == id))
+    new_routes = deduped ++ [route]
+
+    req_fn = if method == :post, do: &Req.post/2, else: &Req.put/2
+
+    case req_fn.(base_req(), url: url, json: new_routes) do
       {:ok, %{status: s}} when s in 200..299 ->
         Logger.info("Caddy: created route #{id} → #{upstream}")
         :ok
 
       {:ok, %{status: s, body: body}} ->
-        {:error, "Caddy PUT routes failed #{s}: #{inspect(body)}"}
+        {:error, "Caddy routes #{method} failed #{s}: #{inspect(body)}"}
 
       {:error, reason} ->
         {:error, reason}
