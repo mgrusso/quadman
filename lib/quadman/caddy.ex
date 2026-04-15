@@ -22,7 +22,7 @@ defmodule Quadman.Caddy do
   end
 
   defp enabled? do
-    Application.get_env(:quadman, :caddy_enabled, false)
+    Quadman.AppSettings.get("caddy_enabled", "false") == "true"
   end
 
   def ping do

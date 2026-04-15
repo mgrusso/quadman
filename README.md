@@ -76,11 +76,8 @@ Browser ──HTTPS──► Caddy ──► Quadman (Phoenix/LiveView, port 400
 # Download the latest release
 curl -fsSL https://github.com/mgrusso/quadman/releases/latest/download/quadman-linux-x86_64.tar.gz -o quadman.tar.gz
 
-# Run the installer (creates user, dirs, systemd unit)
+# Run the installer (creates user, dirs, systemd unit, sets sysctl for Caddy)
 curl -fsSL https://raw.githubusercontent.com/mgrusso/quadman/main/priv/deploy/install.sh | sudo bash
-
-# With Caddy installed automatically:
-curl -fsSL https://raw.githubusercontent.com/mgrusso/quadman/main/priv/deploy/install.sh | sudo bash -s -- --caddy
 
 # Extract the release
 sudo tar -xzf quadman.tar.gz -C /opt/quadman/
@@ -126,17 +123,19 @@ All variables can be placed in `/etc/quadman/env` (loaded by the systemd unit).
 
 ## Caddy integration
 
-Quadman can automatically register HTTPS routes in [Caddy](https://caddyserver.com) when you deploy a service. No Caddyfile edits needed — routes are added and removed via the Caddy Admin API.
+Quadman can automatically register HTTPS routes in [Caddy](https://caddyserver.com) when you deploy a service. No Caddyfile editing needed — Caddy runs as a Podman container managed by Quadman itself, and routes are added and removed via its Admin API.
 
 **Setup:**
 
-1. Install Caddy (the install script handles this with `--caddy`)
-2. Configure `/etc/caddy/Caddyfile` — see `priv/deploy/Caddyfile.example`
-3. Set `CADDY_ENABLED=true` in `/etc/quadman/env`
-4. In the Quadman UI, set a domain on any service (e.g. `myapp.example.com`)
-5. Deploy — Quadman registers the Caddy route and Caddy provisions a certificate automatically
+1. Run the install script — it sets `net.ipv4.ip_unprivileged_port_start=80` via sysctl so rootless containers can bind ports 80 and 443
+2. Open the Quadman UI and go to **Settings → Caddy**
+3. Click **Deploy Caddy container** — Quadman pulls `caddy:2`, writes a minimal Caddyfile, creates the Quadlet unit, and starts it
+4. Enable **Route management** in the same section
+5. Set a domain on any service (e.g. `myapp.example.com`) and deploy — Quadman registers the route in Caddy and Caddy provisions a certificate automatically
 
 Routes are tagged with `@id: quadman-<service>` in Caddy's config, so Quadman can update or remove them independently.
+
+To upgrade Caddy, undeploy and redeploy from Settings — Podman will pull the latest `caddy:2` image.
 
 ---
 
