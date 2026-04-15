@@ -215,20 +215,36 @@ defmodule Quadman.Workers.DeployWorker do
     unit = "#{service_name}.service"
     journalctl = System.find_executable("journalctl") || "/usr/bin/journalctl"
 
-    # Read the system journal (quadman must be in the systemd-journal group).
-    # Unit lifecycle and start-failure messages are written there, not the user journal.
-    {output, _} =
-      System.cmd(journalctl, ["-u", unit, "--no-pager", "-n", "100", "--output", "short"],
-        stderr_to_stdout: true)
+    # User service journal entries live in the USER journal, not the system journal.
+    # Access them via --user-unit with the DBUS socket of the lingering user session.
+    # XDG_RUNTIME_DIR and HOME must also be set for journalctl to locate the socket.
+    case System.cmd("id", ["-u"]) do
+      {uid_str, 0} ->
+        uid = String.trim(uid_str)
 
-    lines =
-      output
-      |> String.split("\n", trim: true)
-      |> Enum.reject(&journal_meta_line?/1)
+        env = [
+          {"DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/#{uid}/bus"},
+          {"XDG_RUNTIME_DIR", "/run/user/#{uid}"},
+          {"HOME", System.get_env("HOME", "/opt/quadman")}
+        ]
 
-    if lines != [] do
-      log.("--- systemd journal (#{unit}) ---", "warn")
-      Enum.each(lines, &log.(&1, "info"))
+        {output, _} =
+          System.cmd(journalctl,
+            ["--user-unit", unit, "--no-pager", "-n", "100", "--output", "short"],
+            stderr_to_stdout: true, env: env)
+
+        lines =
+          output
+          |> String.split("\n", trim: true)
+          |> Enum.reject(&journal_meta_line?/1)
+
+        if lines != [] do
+          log.("--- systemd journal (#{unit}) ---", "warn")
+          Enum.each(lines, &log.(&1, "info"))
+        end
+
+      _ ->
+        :ok
     end
   rescue
     _ -> :ok

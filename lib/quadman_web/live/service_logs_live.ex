@@ -116,9 +116,23 @@ defmodule QuadmanWeb.ServiceLogsLive do
   defp open_journalctl_port(service_name, _tail_args) do
     unit = "#{service_name}.service"
     exe = System.find_executable("journalctl") || "/usr/bin/journalctl"
-    # Read from the system journal (quadman must be in the systemd-journal group).
-    args = ["-u", unit, "--no-pager", "--follow", "--output", "short"]
-    open_port(exe, args)
+
+    case System.cmd("id", ["-u"]) do
+      {uid_str, 0} ->
+        uid = String.trim(uid_str)
+
+        env = [
+          {"DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/#{uid}/bus"},
+          {"XDG_RUNTIME_DIR", "/run/user/#{uid}"},
+          {"HOME", System.get_env("HOME", "/opt/quadman")}
+        ]
+
+        args = ["--user-unit", unit, "--no-pager", "--follow", "--output", "short"]
+        open_port(exe, args, env: env)
+
+      _ ->
+        {:error, :unavailable}
+    end
   end
 
   defp open_port(exe, args, opts \\ []) do
