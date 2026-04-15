@@ -204,10 +204,9 @@ defmodule QuadmanWeb.SettingsLive do
         put_flash(socket, :error, "podman not found")
 
       exe ->
-        env_cl = podman_env_cl()
         args = ["logs", "--follow", "--names", "--tail", "200", "systemd-caddy"]
-        home = System.get_env("HOME", "/opt/quadman")
-        port_opts = [args: args, stderr_to_stdout: true, exit_status: true, env: env_cl, cd: home]
+        port_opts = [args: args, stderr_to_stdout: true, exit_status: true,
+                     cd: "/opt/quadman", env: port_env()]
 
         port =
           try do
@@ -254,15 +253,20 @@ defmodule QuadmanWeb.SettingsLive do
       Enum.find(@podman_candidates, &File.exists?/1)
   end
 
-  defp podman_env_cl do
-    home = System.get_env("HOME", "/opt/quadman")
+  # Build a full Port env: current OS environment merged with required podman overrides.
+  # Port.open replaces the entire env when env: is specified, so we must include everything.
+  defp port_env do
     {uid, _} = System.cmd("id", ["-u"])
     uid = String.trim(uid)
 
-    [
-      {~c"HOME", to_charlist(home)},
-      {~c"XDG_RUNTIME_DIR", to_charlist("/run/user/#{uid}")}
-    ]
+    overrides = %{
+      "HOME"            => "/opt/quadman",
+      "XDG_RUNTIME_DIR" => "/run/user/#{uid}"
+    }
+
+    System.get_env()
+    |> Map.merge(overrides)
+    |> Enum.map(fn {k, v} -> {to_charlist(k), to_charlist(v)} end)
   end
 
   # ---------------------------------------------------------------------------

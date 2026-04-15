@@ -98,7 +98,7 @@ defmodule QuadmanWeb.ServiceLogsLive do
           # Container exists (running or stopped) — stream podman logs
           args = ["logs", "--follow", "--names"] ++ tail_args ++ [container_name]
 
-          case open_port(exe, args) do
+          case open_port(exe, args, port_env()) do
             {:ok, port} ->
               socket |> assign(:port, port) |> assign(:streaming, true) |> assign(:buffer, "")
 
@@ -118,15 +118,13 @@ defmodule QuadmanWeb.ServiceLogsLive do
     {uid, _} = System.cmd("id", ["-u"])
     uid = String.trim(uid)
 
-    env_cl = [
-      {~c"HOME", to_charlist(System.get_env("HOME", "/opt/quadman"))},
-      {~c"XDG_RUNTIME_DIR", to_charlist("/run/user/#{uid}")},
-      {~c"DBUS_SESSION_BUS_ADDRESS", to_charlist("unix:path=/run/user/#{uid}/bus")}
-    ]
+    extra = %{
+      "DBUS_SESSION_BUS_ADDRESS" => "unix:path=/run/user/#{uid}/bus"
+    }
 
     args = ["--user-unit", unit, "--no-pager", "--follow", "--output", "short"]
 
-    case open_port(exe, args, env_cl) do
+    case open_port(exe, args, port_env(extra)) do
       {:ok, port} ->
         socket |> assign(:port, port) |> assign(:streaming, true) |> assign(:buffer, "")
 
@@ -135,12 +133,25 @@ defmodule QuadmanWeb.ServiceLogsLive do
     end
   end
 
-  defp open_port(exe, args, env_cl \\ []) do
-    home = System.get_env("HOME", "/opt/quadman")
+  # Build a full Port env: current OS environment merged with required podman overrides.
+  # Port.open replaces the entire env when env: is specified, so we must include everything.
+  defp port_env(extra \\ %{}) do
+    {uid, _} = System.cmd("id", ["-u"])
+    uid = String.trim(uid)
 
-    port_opts =
-      [args: args, stderr_to_stdout: true, exit_status: true, cd: home] ++
-        if(env_cl != [], do: [env: env_cl], else: [])
+    overrides = Map.merge(%{
+      "HOME"            => "/opt/quadman",
+      "XDG_RUNTIME_DIR" => "/run/user/#{uid}"
+    }, extra)
+
+    System.get_env()
+    |> Map.merge(overrides)
+    |> Enum.map(fn {k, v} -> {to_charlist(k), to_charlist(v)} end)
+  end
+
+  defp open_port(exe, args, env_cl) do
+    port_opts = [args: args, stderr_to_stdout: true, exit_status: true,
+                 cd: "/opt/quadman", env: env_cl]
 
     try do
       port = Port.open({:spawn_executable, exe}, port_opts)
@@ -150,11 +161,10 @@ defmodule QuadmanWeb.ServiceLogsLive do
     end
   end
 
-  # String env for System.cmd (inspect check)
+  # String env for System.cmd — System.cmd merges with current env, so just the overrides
   defp podman_env_str do
-    home = System.get_env("HOME", "/opt/quadman")
     {uid, _} = System.cmd("id", ["-u"])
-    [{"HOME", home}, {"XDG_RUNTIME_DIR", "/run/user/#{String.trim(uid)}"}]
+    [{"HOME", "/opt/quadman"}, {"XDG_RUNTIME_DIR", "/run/user/#{String.trim(uid)}"}]
   end
 
 
