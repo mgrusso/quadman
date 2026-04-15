@@ -6,10 +6,27 @@ import topbar from "../vendor/topbar"
 // Hooks
 const Hooks = {}
 
-// Auto-scroll log container to bottom when new lines arrive
-Hooks.ScrollBottom = {
-  mounted() { this.scrollToBottom() },
-  updated() { this.scrollToBottom() },
+// Smart log streaming hook:
+// - Auto-scrolls to bottom when new lines arrive, unless user has scrolled up
+// - Notifies LiveView when the at-bottom state changes (shows/hides the jump button)
+Hooks.LogStream = {
+  mounted() {
+    this.atBottom = true
+    this.scrollToBottom()
+
+    this.el.addEventListener('scroll', () => {
+      const el = this.el
+      const wasAtBottom = this.atBottom
+      this.atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50
+
+      if (this.atBottom !== wasAtBottom) {
+        this.pushEvent('scroll_position', { at_bottom: this.atBottom })
+      }
+    })
+  },
+  updated() {
+    if (this.atBottom) this.scrollToBottom()
+  },
   scrollToBottom() {
     this.el.scrollTop = this.el.scrollHeight
   }
