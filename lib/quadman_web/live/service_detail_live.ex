@@ -197,7 +197,7 @@ defmodule QuadmanWeb.ServiceDetailLive do
     {:noreply,
      socket
      |> put_flash(:info, "Service \"#{service.name}\" deleted.")
-     |> push_navigate(to: ~p"/")}
+     |> push_navigate(to: ~p"/services")}
   end
 
   # --- Env var management ---
