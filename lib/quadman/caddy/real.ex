@@ -112,37 +112,46 @@ defmodule Quadman.Caddy.Real do
   end
 
   # ---------------------------------------------------------------------------
-  # Bootstrap — reads full config and merges server in, so parent nodes always
-  # exist before we try to write routes into them.
+  # Bootstrap — creates the quadman_services HTTP server if absent.
+  # Works via specific sub-paths only (never touches root /config/) to avoid
+  # 409 conflicts when a config already exists.
   # ---------------------------------------------------------------------------
 
   defp ensure_http_server do
-    with {:ok, %{status: 200, body: config}} <- Req.get(base_req(), url: "/config/"),
-         config when is_map(config) <- config || %{} do
-      if get_in(config, ["apps", "http", "servers", @server_name]) do
+    case Req.get(base_req(), url: "/config/apps/http/servers/#{@server_name}") do
+      {:ok, %{status: 200}} ->
         :ok
-      else
+
+      {:ok, %{status: 404}} ->
         Logger.info("Caddy: bootstrapping server #{@server_name}")
         server = %{"listen" => [":80", ":443"], "routes" => []}
+        bootstrap_server(server)
 
-        new_config =
-          config
-          |> Map.put_new("apps", %{})
-          |> update_in(["apps"], &Map.put_new(&1, "http", %{}))
-          |> update_in(["apps", "http"], &Map.put_new(&1, "servers", %{}))
-          |> put_in(["apps", "http", "servers", @server_name], server)
+      {:ok, %{status: s, body: b}} ->
+        {:error, "Caddy server check failed #{s}: #{inspect(b)}"}
 
-        case Req.put(base_req(), url: "/config/", json: new_config) do
-          {:ok, %{status: s}} when s in 200..299 -> :ok
-          {:ok, %{status: s, body: b}} -> {:error, "Caddy bootstrap failed #{s}: #{inspect(b)}"}
-          {:error, reason} -> {:error, reason}
-        end
-      end
-    else
-      {:ok, %{status: s, body: b}} -> {:error, "Caddy config read failed #{s}: #{inspect(b)}"}
-      {:error, reason} -> {:error, reason}
-      _ -> {:error, "unexpected Caddy config response"}
+      {:error, reason} ->
+        {:error, reason}
     end
+  end
+
+  # Try increasingly broad paths until one accepts the PUT.
+  defp bootstrap_server(server) do
+    candidates = [
+      {"/config/apps/http/servers/#{@server_name}", server},
+      {"/config/apps/http", %{"servers" => %{@server_name => server}}},
+      {"/config/apps", %{"http" => %{"servers" => %{@server_name => server}}}}
+    ]
+
+    result =
+      Enum.find_value(candidates, fn {path, body} ->
+        case Req.put(base_req(), url: path, json: body) do
+          {:ok, %{status: s}} when s in 200..299 -> :ok
+          _ -> nil
+        end
+      end)
+
+    result || {:error, "Caddy: could not create #{@server_name} server at any config path"}
   end
 
   # ---------------------------------------------------------------------------
