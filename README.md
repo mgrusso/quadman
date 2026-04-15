@@ -95,14 +95,13 @@ sudo -u quadman /opt/quadman/bin/quadman eval "Quadman.Release.migrate()"
 sudo systemctl enable --now quadman
 ```
 
-The default admin account is seeded on first migration:
+**First-run setup — creating the admin account**
 
-| Field | Default |
-|---|---|
-| Email | `admin@quadman.local` |
-| Password | `changeme123!` |
+Quadman has no pre-seeded accounts. On a fresh install, navigate to `https://<your-host>/register`. The first user to register is automatically granted administrator access. Subsequent registrations are disabled by default.
 
-**Change the password** by setting `ADMIN_EMAIL` and `ADMIN_PASSWORD` before running seeds, or directly in the database.
+**Enabling or disabling user registration**
+
+Once logged in, go to **Settings → User Registration** and toggle the switch. When disabled, the `/register` page shows a "registrations are currently disabled" notice and no account can be created. When enabled, any visitor can register a new account — turn this off again once your users are set up.
 
 ---
 

@@ -1,0 +1,72 @@
+<div class="min-h-screen flex items-center justify-center bg-gray-950">
+  <div class="w-full max-w-md">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-8 shadow-xl">
+      <h1 class="text-2xl font-bold text-white mb-2">Quadman</h1>
+      <p class="text-gray-400 mb-8">Create your account</p>
+
+      <%= if @error do %>
+        <div class="mb-4 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
+          <%= @error %>
+        </div>
+      <% end %>
+
+      <%= if @registrations_open do %>
+        <form action={~p"/register"} method="post">
+          <input type="hidden" name="_csrf_token" value={Plug.CSRFProtection.get_csrf_token()} />
+
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-300 mb-1" for="email">Email</label>
+            <input
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+              type="email"
+              id="email"
+              name="email"
+              autocomplete="email"
+              required
+            />
+          </div>
+
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-300 mb-1" for="password">Password</label>
+            <input
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+              type="password"
+              id="password"
+              name="password"
+              autocomplete="new-password"
+              required
+            />
+          </div>
+
+          <div class="mb-6">
+            <label class="block text-sm font-medium text-gray-300 mb-1" for="password_confirmation">Confirm password</label>
+            <input
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+              type="password"
+              id="password_confirmation"
+              name="password_confirmation"
+              autocomplete="new-password"
+              required
+            />
+          </div>
+
+          <button
+            type="submit"
+            class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg px-4 py-2 transition-colors"
+          >
+            Create account
+          </button>
+        </form>
+      <% else %>
+        <div class="p-4 bg-gray-800 rounded-lg text-gray-400 text-sm text-center">
+          Registrations are currently disabled. Contact your administrator.
+        </div>
+      <% end %>
+
+      <p class="mt-6 text-center text-sm text-gray-500">
+        Already have an account?
+        <a href={~p"/login"} class="text-indigo-400 hover:text-indigo-300">Sign in</a>
+      </p>
+    </div>
+  </div>
+</div>

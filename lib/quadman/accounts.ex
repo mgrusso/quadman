@@ -13,10 +13,27 @@ defmodule Quadman.Accounts do
 
   def list_users, do: Repo.all(User)
 
+  def any_users? do
+    Repo.exists?(User)
+  end
+
   def register_user(attrs) do
     %User{}
     |> User.registration_changeset(attrs)
     |> Repo.insert()
+  end
+
+  def register_user_if_allowed(attrs) do
+    cond do
+      not any_users?() ->
+        register_user(Map.put(attrs, "role", "admin"))
+
+      Quadman.AppSettings.get("registrations_enabled", "false") == "true" ->
+        register_user(attrs)
+
+      true ->
+        {:error, :registrations_disabled}
+    end
   end
 
   def authenticate_user(email, password) do

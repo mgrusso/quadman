@@ -1,11 +1,12 @@
 defmodule QuadmanWeb.SettingsLive do
   use QuadmanWeb, :live_view
 
-  alias Quadman.{Podman, Caddy}
+  alias Quadman.{Podman, Caddy, AppSettings}
 
   @impl true
   def mount(_params, _session, socket) do
     caddy_enabled = Application.get_env(:quadman, :caddy_enabled, false)
+    registrations_enabled = AppSettings.get("registrations_enabled", "false") == "true"
 
     {:ok,
      socket
@@ -13,7 +14,8 @@ defmodule QuadmanWeb.SettingsLive do
      |> assign(:podman_status, check_podman())
      |> assign(:caddy_enabled, caddy_enabled)
      |> assign(:caddy_status, if(caddy_enabled, do: check_caddy(), else: :disabled))
-     |> assign(:caddy_routes, if(caddy_enabled, do: load_caddy_routes(), else: []))}
+     |> assign(:caddy_routes, if(caddy_enabled, do: load_caddy_routes(), else: []))
+     |> assign(:registrations_enabled, registrations_enabled)}
   end
 
   @impl true
@@ -22,6 +24,12 @@ defmodule QuadmanWeb.SettingsLive do
   @impl true
   def handle_event("check_podman", _params, socket) do
     {:noreply, assign(socket, :podman_status, check_podman())}
+  end
+
+  def handle_event("toggle_registrations", _params, socket) do
+    new_val = if socket.assigns.registrations_enabled, do: "false", else: "true"
+    AppSettings.put("registrations_enabled", new_val)
+    {:noreply, assign(socket, :registrations_enabled, new_val == "true")}
   end
 
   def handle_event("check_caddy", _params, socket) do
@@ -69,6 +77,28 @@ defmodule QuadmanWeb.SettingsLive do
           <.config_row label="Quadlet directory" value={Application.get_env(:quadman, :quadlet_dir, "~/.config/containers/systemd")} />
           <.config_row label="Secrets directory" value={Application.get_env(:quadman, :quadlet_secret_dir, "~/.config/quadman/secrets")} />
           <.config_row label="systemd scope" value={Application.get_env(:quadman, :systemd_scope, "user")} />
+        </div>
+      </div>
+
+      <%!-- User registration --%>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl mb-6">
+        <div class="flex items-center justify-between px-5 py-4">
+          <div>
+            <h2 class="font-semibold text-white">User Registration</h2>
+            <p class="text-xs text-gray-500 mt-0.5">Allow new users to register accounts at <span class="font-mono">/register</span></p>
+          </div>
+          <button
+            phx-click="toggle_registrations"
+            class={[
+              "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none",
+              if(@registrations_enabled, do: "bg-indigo-600", else: "bg-gray-700")
+            ]}
+          >
+            <span class={[
+              "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+              if(@registrations_enabled, do: "translate-x-6", else: "translate-x-1")
+            ]} />
+          </button>
         </div>
       </div>
 

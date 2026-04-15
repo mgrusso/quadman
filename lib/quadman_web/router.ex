@@ -21,6 +21,8 @@ defmodule QuadmanWeb.Router do
 
     get "/login", AuthController, :login
     post "/login", AuthController, :login_submit
+    get "/register", AuthController, :register
+    post "/register", AuthController, :register_submit
     delete "/logout", AuthController, :logout
   end
 
