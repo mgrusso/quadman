@@ -55,10 +55,11 @@ jobs:
 
       - name: Rename tarball to stable filename
         run: |
-          echo "=== _build/prod/ contents ==="
-          ls -la _build/prod/ || true
-          TARBALL=$(find _build/prod -maxdepth 1 -name "quadman-*.tar.gz" | head -1)
-          echo "Found tarball: $TARBALL"
+          echo "=== searching for tarball ==="
+          find _build -name "*.tar.gz" | sort
+          TARBALL=$(find _build -name "quadman-*.tar.gz" | head -1)
+          echo "Found: $TARBALL"
+          test -n "$TARBALL" || (echo "ERROR: no tarball found" && exit 1)
           mv "$TARBALL" quadman-linux-x86_64.tar.gz
 
       - name: Create GitHub Release
