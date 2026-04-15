@@ -52,14 +52,11 @@ defmodule Quadman.Caddy.Real do
           Logger.info("Caddy: updated route #{id} → #{upstream}")
           :ok
 
-        {:ok, %{status: 404}} ->
-          add_route_to_array(id, route, upstream)
-
-        {:ok, %{status: 400}} ->
-          # Caddy has a duplicate @id in the routes array (corrupted state from
-          # a previous failed deploy). Clean up all duplicates then add fresh.
-          Logger.warning("Caddy: duplicate route #{id} detected, cleaning up")
-          clean_and_add_route(id, route, upstream)
+        {:ok, %{status: status}} when status in [400, 404] ->
+          # 404 = route ID not registered yet; 400 = duplicate @id in array.
+          # Best-effort delete any stale entry, then POST a single route to append.
+          Req.delete(base_req(), url: "/id/#{id}")
+          append_route(id, route, upstream)
 
         {:ok, %{status: s, body: body}} ->
           {:error, "Caddy PUT route failed #{s}: #{inspect(body)}"}
@@ -146,46 +143,21 @@ defmodule Quadman.Caddy.Real do
 
   defp routes_url, do: "/config/apps/http/servers/#{@server_name}/routes"
 
-  defp fetch_routes do
-    case Req.get(base_req(), url: routes_url()) do
-      {:ok, %{status: 200, body: list}} when is_list(list) -> list
-      _ -> []
-    end
-  end
-
-  # Add route to array, deduplicating by @id first to prevent duplicate errors.
-  # Uses POST when the routes array already exists (replaces in-place),
-  # falls back to PUT when the array doesn't exist yet (creates it).
-  defp add_route_to_array(id, route, upstream) do
-    url = routes_url()
-
-    {current, method} =
-      case Req.get(base_req(), url: url) do
-        {:ok, %{status: 200, body: list}} when is_list(list) -> {list, :post}
-        _ -> {[], :put}
-      end
-
-    deduped = Enum.reject(current, &(Map.get(&1, "@id") == id))
-    new_routes = deduped ++ [route]
-
-    req_fn = if method == :post, do: &Req.post/2, else: &Req.put/2
-
-    case req_fn.(base_req(), url: url, json: new_routes) do
+  # Append a single route object to the routes array.
+  # ensure_http_server/0 guarantees the array exists before this is called.
+  # Caddy's POST to an array path appends one element (not replaces).
+  defp append_route(id, route, upstream) do
+    case Req.post(base_req(), url: routes_url(), json: route) do
       {:ok, %{status: s}} when s in 200..299 ->
         Logger.info("Caddy: created route #{id} → #{upstream}")
         :ok
 
       {:ok, %{status: s, body: body}} ->
-        {:error, "Caddy routes #{method} failed #{s}: #{inspect(body)}"}
+        {:error, "Caddy POST route failed #{s}: #{inspect(body)}"}
 
       {:error, reason} ->
         {:error, reason}
     end
-  end
-
-  # Remove all duplicate entries for this ID from the array, then add fresh.
-  defp clean_and_add_route(id, route, upstream) do
-    add_route_to_array(id, route, upstream)
   end
 
   # ---------------------------------------------------------------------------
