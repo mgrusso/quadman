@@ -198,18 +198,36 @@ sleep 2
 
 # 7. Podman socket — enable and start the REST API socket for the quadman user
 info "Enabling Podman socket for '${QUADMAN_USER}'..."
-XDG_RUNTIME_DIR="/run/user/${QUADMAN_UID}"
 
-if systemctl --user -M "${QUADMAN_USER}@" enable podman.socket 2>/dev/null; then
-  systemctl --user -M "${QUADMAN_USER}@" start podman.socket 2>/dev/null || true
-  info "Podman socket enabled and started."
+# Symlink-based enable: works regardless of DBUS availability or systemd version.
+# The user may have a non-default HOME so we resolve it explicitly.
+PODMAN_SOCKET_UNIT="/usr/lib/systemd/user/podman.socket"
+USER_SYSTEMD_DIR="${QUADMAN_HOME}/.config/systemd/user"
+SOCKETS_WANTS="${USER_SYSTEMD_DIR}/sockets.target.wants"
+
+if [[ -f "${PODMAN_SOCKET_UNIT}" ]]; then
+  mkdir -p "${SOCKETS_WANTS}"
+  ln -sf "${PODMAN_SOCKET_UNIT}" "${SOCKETS_WANTS}/podman.socket"
+  chown -R "${QUADMAN_USER}:${QUADMAN_USER}" "${USER_SYSTEMD_DIR}"
+
+  # Reload and start via machinectl if available, otherwise direct runuser
+  if systemctl --user -M "${QUADMAN_USER}@" daemon-reload 2>/dev/null; then
+    systemctl --user -M "${QUADMAN_USER}@" start podman.socket 2>/dev/null || true
+  else
+    HOME="${QUADMAN_HOME}" XDG_RUNTIME_DIR="/run/user/${QUADMAN_UID}" \
+      runuser -u "${QUADMAN_USER}" -- systemctl --user daemon-reload 2>/dev/null || true
+    HOME="${QUADMAN_HOME}" XDG_RUNTIME_DIR="/run/user/${QUADMAN_UID}" \
+      runuser -u "${QUADMAN_USER}" -- systemctl --user start podman.socket 2>/dev/null || true
+  fi
+
+  sleep 1
+  if [[ -S "/run/user/${QUADMAN_UID}/podman/podman.sock" ]]; then
+    info "Podman socket active at /run/user/${QUADMAN_UID}/podman/podman.sock"
+  else
+    warn "Podman socket not yet visible — it should appear once the user session fully starts."
+  fi
 else
-  # Fallback for older systemd versions
-  sudo -u "${QUADMAN_USER}" \
-    XDG_RUNTIME_DIR="/run/user/${QUADMAN_UID}" \
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${QUADMAN_UID}/bus" \
-    systemctl --user enable --now podman.socket 2>/dev/null || \
-    warn "Could not enable Podman socket automatically. Run as ${QUADMAN_USER}: systemctl --user enable --now podman.socket"
+  warn "podman.socket unit not found at ${PODMAN_SOCKET_UNIT} — is Podman installed?"
 fi
 
 # Verify socket exists
