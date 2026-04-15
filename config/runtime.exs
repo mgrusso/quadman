@@ -45,8 +45,9 @@ if config_env() == :prod do
     database: database_path,
     journal_mode: :wal,
     cache_size: -64000,
-    foreign_keys: true,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "5")
+    foreign_keys: :on,
+    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "5"),
+    show_sensitive_data_on_connection_error: true
 
   secret_key_base =
     System.get_env("SECRET_KEY_BASE") ||
