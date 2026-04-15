@@ -37,7 +37,7 @@ defmodule Quadman.Application do
   end
 
   defp skip_migrations?() do
-    # By default, sqlite migrations are run when using a release
-    System.get_env("RELEASE_NAME") != nil
+    # Skip in dev (use mix ecto.migrate); run automatically in releases
+    System.get_env("RELEASE_NAME") == nil
   end
 end

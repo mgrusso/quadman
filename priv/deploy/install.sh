@@ -219,14 +219,11 @@ if [[ "${INSTALL_CADDY}" == "true" ]]; then
 echo "     - Set CADDY_ENABLED=true"
 fi
 echo ""
-echo "  3. Run migrations:"
-echo "     sudo -u ${QUADMAN_USER} ${INSTALL_DIR}/bin/quadman eval \"Quadman.Release.migrate()\""
-echo ""
-echo "  4. Start Quadman:"
+echo "  3. Start Quadman (migrations run automatically on first boot):"
 echo "     systemctl enable --now quadman"
 echo ""
 if [[ "${INSTALL_CADDY}" == "true" ]]; then
-echo "  5. Configure Caddy:"
+echo "  4. Configure Caddy:"
 echo "     Edit /etc/caddy/Caddyfile, set your hostname, then:"
 echo "     systemctl enable --now caddy"
 echo ""
