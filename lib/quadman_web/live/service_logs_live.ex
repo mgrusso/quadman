@@ -109,34 +109,39 @@ defmodule QuadmanWeb.ServiceLogsLive do
 
       exe ->
         args = ["logs", "--follow", "--names"] ++ tail_args ++ [container_name]
-        open_port(exe, args)
+        open_port(exe, args, env: podman_env())
     end
   end
 
   defp open_journalctl_port(service_name, _tail_args) do
     unit = "#{service_name}.service"
     exe = System.find_executable("journalctl") || "/usr/bin/journalctl"
+    {uid, _} = System.cmd("id", ["-u"])
+    uid = String.trim(uid)
 
-    case System.cmd("id", ["-u"]) do
-      {uid_str, 0} ->
-        uid = String.trim(uid_str)
-
-        env = [
+    env =
+      podman_env() ++
+        [
           {"DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/#{uid}/bus"},
-          {"XDG_RUNTIME_DIR", "/run/user/#{uid}"},
-          {"HOME", System.get_env("HOME", "/opt/quadman")}
+          {"XDG_RUNTIME_DIR", "/run/user/#{uid}"}
         ]
 
-        args = ["--user-unit", unit, "--no-pager", "--follow", "--output", "short"]
-        open_port(exe, args, env: env)
-
-      _ ->
-        {:error, :unavailable}
-    end
+    args = ["--user-unit", unit, "--no-pager", "--follow", "--output", "short"]
+    open_port(exe, args, env: env)
   end
 
+  # Port.open expects env as charlists {name, val}.
   defp open_port(exe, args, opts \\ []) do
-    port_opts = [args: args, stderr_to_stdout: true, exit_status: true] ++ opts
+    env_cl =
+      case Keyword.get(opts, :env) do
+        nil -> []
+        env -> Enum.map(env, fn {k, v} -> {to_charlist(k), to_charlist(v)} end)
+      end
+
+    port_opts =
+      [args: args, stderr_to_stdout: true, exit_status: true] ++
+        Keyword.delete(opts, :env) ++
+        if(env_cl != [], do: [env: env_cl], else: [])
 
     try do
       port = Port.open({:spawn_executable, exe}, port_opts)
@@ -144,6 +149,13 @@ defmodule QuadmanWeb.ServiceLogsLive do
     rescue
       e -> {:error, e}
     end
+  end
+
+  # Podman needs HOME and XDG_RUNTIME_DIR to locate container storage.
+  defp podman_env do
+    home = System.get_env("HOME", "/opt/quadman")
+    {uid, _} = System.cmd("id", ["-u"])
+    [{"HOME", home}, {"XDG_RUNTIME_DIR", "/run/user/#{String.trim(uid)}"}]
   end
 
 

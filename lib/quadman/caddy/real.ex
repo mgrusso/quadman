@@ -3,14 +3,15 @@ defmodule Quadman.Caddy.Real do
   Caddy Admin API client. Talks to `http://localhost:2019` (or CADDY_ADMIN_URL).
 
   Route lifecycle:
-    - `upsert_route/2`: PUT /id/{route_id} to update; if 404, POST to routes array.
+    - `upsert_route/2`: tries PUT /id/{route_id} first; on 404, reads the full
+      routes array and PUTs it back with the new route appended. This avoids
+      POST-to-path which fails when parent nodes don't exist yet.
     - `remove_route/1`: DELETE /id/{route_id}; ignores 404 (already gone).
 
-  Routes include `"@id"` so Caddy registers them in its ID namespace, enabling
-  future updates without array-index bookkeeping.
+  Routes include `"@id"` so Caddy registers them in its ID namespace.
 
-  The HTTP server "quadman_services" is bootstrapped on first `upsert_route` call
-  if it doesn't exist in Caddy's config yet.
+  The HTTP server "quadman_services" is bootstrapped via the full /config/
+  endpoint on first use so parent nodes are always created correctly.
   """
 
   @behaviour Quadman.Caddy
@@ -52,17 +53,23 @@ defmodule Quadman.Caddy.Real do
           :ok
 
         {:ok, %{status: 404}} ->
-          # Route doesn't exist yet — append it
-          case Req.post(base_req(),
-                 url: "/config/apps/http/servers/#{@server_name}/routes",
-                 json: route
-               ) do
+          # Route doesn't exist yet — read the current routes array and append.
+          # Using PUT (not POST) so it works even if the routes node was nil.
+          routes_url = "/config/apps/http/servers/#{@server_name}/routes"
+
+          current =
+            case Req.get(base_req(), url: routes_url) do
+              {:ok, %{status: 200, body: list}} when is_list(list) -> list
+              _ -> []
+            end
+
+          case Req.put(base_req(), url: routes_url, json: current ++ [route]) do
             {:ok, %{status: s}} when s in 200..299 ->
               Logger.info("Caddy: created route #{id} → #{upstream}")
               :ok
 
             {:ok, %{status: s, body: body}} ->
-              {:error, "Caddy POST route failed #{s}: #{inspect(body)}"}
+              {:error, "Caddy PUT routes failed #{s}: #{inspect(body)}"}
 
             {:error, reason} ->
               {:error, reason}
@@ -105,28 +112,36 @@ defmodule Quadman.Caddy.Real do
   end
 
   # ---------------------------------------------------------------------------
-  # Bootstrap
+  # Bootstrap — reads full config and merges server in, so parent nodes always
+  # exist before we try to write routes into them.
   # ---------------------------------------------------------------------------
 
   defp ensure_http_server do
-    url = "/config/apps/http/servers/#{@server_name}"
-
-    case Req.get(base_req(), url: url) do
-      {:ok, %{status: 200}} ->
+    with {:ok, %{status: 200, body: config}} <- Req.get(base_req(), url: "/config/"),
+         config when is_map(config) <- config || %{} do
+      if get_in(config, ["apps", "http", "servers", @server_name]) do
         :ok
-
-      {:ok, %{status: 404}} ->
+      else
         Logger.info("Caddy: bootstrapping server #{@server_name}")
-        server_config = %{"listen" => [":80", ":443"], "routes" => []}
+        server = %{"listen" => [":80", ":443"], "routes" => []}
 
-        case Req.put(base_req(), url: url, json: server_config) do
+        new_config =
+          config
+          |> Map.put_new("apps", %{})
+          |> update_in(["apps"], &Map.put_new(&1, "http", %{}))
+          |> update_in(["apps", "http"], &Map.put_new(&1, "servers", %{}))
+          |> put_in(["apps", "http", "servers", @server_name], server)
+
+        case Req.put(base_req(), url: "/config/", json: new_config) do
           {:ok, %{status: s}} when s in 200..299 -> :ok
-          {:ok, %{status: s, body: b}} -> {:error, "Caddy server bootstrap failed #{s}: #{inspect(b)}"}
+          {:ok, %{status: s, body: b}} -> {:error, "Caddy bootstrap failed #{s}: #{inspect(b)}"}
           {:error, reason} -> {:error, reason}
         end
-
-      {:error, reason} ->
-        {:error, reason}
+      end
+    else
+      {:ok, %{status: s, body: b}} -> {:error, "Caddy config read failed #{s}: #{inspect(b)}"}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, "unexpected Caddy config response"}
     end
   end
 
