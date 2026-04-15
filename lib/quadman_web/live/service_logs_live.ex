@@ -79,15 +79,9 @@ defmodule QuadmanWeb.ServiceLogsLive do
     tail = socket.assigns.tail
     container_name = "systemd-#{service.name}"
 
-    tail_arg = if tail == "all", do: "all", else: tail
+    tail_args = if tail == "all", do: [], else: ["--tail", tail]
 
-    args = [
-      "logs",
-      "--follow",
-      "--tail", tail_arg,
-      "--names",
-      container_name
-    ]
+    args = ["logs", "--follow", "--names"] ++ tail_args ++ [container_name]
 
     case find_executable("podman") do
       nil ->

@@ -54,6 +54,7 @@ defmodule Quadman.Workers.DeployWorker do
         Deployments.update_deployment_status(deployment, "failed")
         broadcast_status(deployment_id, "failed")
         Services.update_service_status(service, "failed")
+        step_collect_container_logs(service, log)
         log.("Deploy failed: #{reason}", "error")
         {:error, reason}
     end
@@ -190,6 +191,30 @@ defmodule Quadman.Workers.DeployWorker do
     else
       log.("No port mappings — skipping Caddy route registration.", "warn")
     end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Container log capture (on failure)
+  # ---------------------------------------------------------------------------
+
+  defp step_collect_container_logs(service, log) do
+    container_name = "systemd-#{service.name}"
+    podman = System.find_executable("podman") || "/usr/bin/podman"
+
+    case System.cmd(podman, ["logs", "--tail", "100", container_name],
+           stderr_to_stdout: true) do
+      {output, _} when output != "" ->
+        log.("--- Container output ---", "warn")
+
+        output
+        |> String.split("\n", trim: true)
+        |> Enum.each(&log.(&1, "info"))
+
+      _ ->
+        :ok
+    end
+  rescue
+    _ -> :ok
   end
 
   # ---------------------------------------------------------------------------
