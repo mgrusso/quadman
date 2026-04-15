@@ -50,13 +50,15 @@ jobs:
 
       - name: Build release
         run: |
-          rm -f _build/prod/quadman-*.tar.gz
-          mix release
+          rm -rf _build/prod/rel _build/prod/quadman-*.tar.gz
+          mix release 2>&1 | tee /tmp/release-output.log
+          echo "=== Release output ==="
+          cat /tmp/release-output.log
+          echo "=== All tarballs in _build ==="
+          find _build -name "*.tar.gz" | sort
 
       - name: Rename tarball to stable filename
         run: |
-          echo "=== searching for tarball ==="
-          find _build -name "*.tar.gz" | sort
           TARBALL=$(find _build -name "quadman-*.tar.gz" | head -1)
           echo "Found: $TARBALL"
           test -n "$TARBALL" || (echo "ERROR: no tarball found" && exit 1)
