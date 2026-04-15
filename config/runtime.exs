@@ -24,10 +24,7 @@ if scope = System.get_env("SYSTEMD_SCOPE") do
   config :quadman, systemd_scope: scope
 end
 
-# Caddy Admin API
-caddy_enabled = System.get_env("CADDY_ENABLED", "false") == "true"
-config :quadman, caddy_enabled: caddy_enabled
-
+# Caddy Admin API URL (caddy_enabled is now managed via the UI in AppSettings)
 if caddy_url = System.get_env("CADDY_ADMIN_URL") do
   config :quadman, caddy_admin_url: caddy_url
 end
@@ -65,5 +62,5 @@ if config_env() == :prod do
 
   # In prod, use the real adapters (not stubs)
   config :quadman, systemd_adapter: Quadman.Systemd.Real
-  if caddy_enabled, do: config(:quadman, caddy_adapter: Quadman.Caddy.Real)
+  config :quadman, caddy_adapter: Quadman.Caddy.Real
 end
