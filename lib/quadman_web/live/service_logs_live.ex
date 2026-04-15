@@ -6,7 +6,7 @@ defmodule QuadmanWeb.ServiceLogsLive do
   @max_lines 1000
 
   # Common install paths tried in order when not found in PATH
-  @journalctl_candidates ~w(/usr/bin/journalctl /bin/journalctl /usr/local/bin/journalctl)
+  @podman_candidates ~w(/usr/bin/podman /bin/podman /usr/local/bin/podman)
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
@@ -77,21 +77,21 @@ defmodule QuadmanWeb.ServiceLogsLive do
     socket = stop_stream(socket)
     service = socket.assigns.service
     tail = socket.assigns.tail
-    unit = service.unit_name || "#{service.name}.service"
+    container_name = "systemd-#{service.name}"
+
+    tail_arg = if tail == "all", do: "all", else: tail
 
     args = [
-      "--user",
-      "--unit", unit,
-      "--no-pager",
+      "logs",
       "--follow",
-      "--lines", tail,
-      "--output", "short-iso",
-      "--no-hostname"
+      "--tail", tail_arg,
+      "--names",
+      container_name
     ]
 
-    case find_executable("journalctl") do
+    case find_executable("podman") do
       nil ->
-        put_flash(socket, :error, "journalctl not found. Check server PATH.")
+        put_flash(socket, :error, "podman not found. Check server PATH.")
 
       exe ->
         port =
@@ -128,7 +128,7 @@ defmodule QuadmanWeb.ServiceLogsLive do
 
   defp find_executable(name) do
     System.find_executable(name) ||
-      Enum.find(@journalctl_candidates, &File.exists?/1)
+      Enum.find(@podman_candidates, &File.exists?/1)
   end
 
   # ---------------------------------------------------------------------------

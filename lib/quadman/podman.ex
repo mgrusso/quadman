@@ -89,7 +89,16 @@ defmodule Quadman.Podman do
   def stats do
     case Req.get(base_req(), url: "/containers/stats", params: [stream: false]) do
       {:ok, %{status: 200, body: body}} ->
-        entries = Map.get(body, "Stats") || []
+        # Podman streams newline-delimited JSON; Req may hand us the raw string.
+        parsed =
+          case body do
+            b when is_map(b) -> b
+            b when is_binary(b) ->
+              b |> String.split("\n", trim: true) |> List.last() |> Jason.decode!()
+            _ -> %{}
+          end
+
+        entries = Map.get(parsed, "Stats") || []
         {:ok, entries}
 
       {:ok, %{status: status, body: body}} ->
