@@ -35,7 +35,7 @@ defmodule Quadman.Podman do
   Returns `{:ok, digest}` or `{:error, reason}`.
   """
   def image_digest(image) do
-    case Req.get(base_req(), url: "/images/#{URI.encode(image)}/json") do
+    case Req.get(base_req(), url: "/images/#{URI.encode(image, &URI.char_unreserved?/1)}/json") do
       {:ok, %{status: 200, body: body}} ->
         digest = get_in(body, ["Digest"]) || get_in(body, ["Id"])
         {:ok, digest}
