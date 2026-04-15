@@ -18,7 +18,9 @@ defmodule QuadmanWeb.AuthController do
         |> redirect(to: ~p"/")
 
       {:error, _} ->
-        render(conn, :login, error: "Invalid email or password")
+        conn
+        |> put_layout(html: {QuadmanWeb.Layouts, :root})
+        |> render(:login, error: "Invalid email or password")
     end
   end
 
