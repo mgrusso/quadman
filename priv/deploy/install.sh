@@ -134,6 +134,16 @@ else
   info "subGID already configured for '${QUADMAN_USER}'."
 fi
 
+# 2c. systemd-journal group — allows reading the system journal for deploy diagnostics
+if getent group systemd-journal &>/dev/null; then
+  if ! id -nG "${QUADMAN_USER}" 2>/dev/null | grep -qw systemd-journal; then
+    info "Adding '${QUADMAN_USER}' to systemd-journal group..."
+    usermod -aG systemd-journal "${QUADMAN_USER}"
+  else
+    info "'${QUADMAN_USER}' already in systemd-journal group."
+  fi
+fi
+
 # 3. Directories
 info "Creating directories..."
 install -d -m 755 -o "${QUADMAN_USER}" -g "${QUADMAN_USER}" "${INSTALL_DIR}"

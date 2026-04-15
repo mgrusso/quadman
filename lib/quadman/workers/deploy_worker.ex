@@ -221,29 +221,28 @@ defmodule Quadman.Workers.DeployWorker do
     unit = "#{service_name}.service"
     journalctl = System.find_executable("journalctl") || "/usr/bin/journalctl"
 
-    case System.cmd("id", ["-u"]) do
-      {uid_str, 0} ->
-        uid = String.trim(uid_str)
-        dbus_socket = "/run/user/#{uid}/bus"
+    # Read the system journal (quadman must be in the systemd-journal group).
+    # Unit lifecycle and start-failure messages are written there, not the user journal.
+    {output, _} =
+      System.cmd(journalctl, ["-u", unit, "--no-pager", "-n", "100", "--output", "short"],
+        stderr_to_stdout: true)
 
-        {output, _} =
-          System.cmd(
-            journalctl,
-            ["--user-unit", unit, "--no-pager", "-n", "100", "--output", "short"],
-            stderr_to_stdout: true,
-            env: [{"DBUS_SESSION_BUS_ADDRESS", "unix:path=#{dbus_socket}"}]
-          )
+    lines =
+      output
+      |> String.split("\n", trim: true)
+      |> Enum.reject(&journal_meta_line?/1)
 
-        if String.trim(output) != "" do
-          log.("--- systemd journal (#{unit}) ---", "warn")
-          output |> String.split("\n", trim: true) |> Enum.each(&log.(&1, "info"))
-        end
-
-      _ ->
-        :ok
+    if lines != [] do
+      log.("--- systemd journal (#{unit}) ---", "warn")
+      Enum.each(lines, &log.(&1, "info"))
     end
   rescue
     _ -> :ok
+  end
+
+  # Filter out journalctl header/hint lines that carry no diagnostic value.
+  defp journal_meta_line?(line) do
+    String.starts_with?(line, "-- ") or String.contains?(line, "Hint:")
   end
 
   # ---------------------------------------------------------------------------
