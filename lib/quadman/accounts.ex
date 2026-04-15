@@ -1,4 +1,5 @@
 defmodule Quadman.Accounts do
+  import Ecto.Query
   alias Quadman.Repo
   alias Quadman.Accounts.User
 
@@ -11,10 +12,16 @@ defmodule Quadman.Accounts do
     Repo.get_by(User, email: email)
   end
 
-  def list_users, do: Repo.all(User)
+  def list_users do
+    User |> order_by([u], u.inserted_at) |> Repo.all()
+  end
 
   def any_users? do
     Repo.exists?(User)
+  end
+
+  def admin_count do
+    Repo.aggregate(from(u in User, where: u.role == "admin" and not u.disabled), :count)
   end
 
   def register_user(attrs) do
@@ -36,10 +43,33 @@ defmodule Quadman.Accounts do
     end
   end
 
+  def set_user_role(%User{} = user, role) do
+    user
+    |> User.admin_changeset(%{role: role})
+    |> Repo.update()
+  end
+
+  def set_user_disabled(%User{} = user, disabled) do
+    user
+    |> User.admin_changeset(%{disabled: disabled})
+    |> Repo.update()
+  end
+
+  def create_user(attrs) do
+    %User{}
+    |> User.registration_changeset(attrs)
+    |> Repo.insert()
+  end
+
+  def delete_user(%User{} = user) do
+    Repo.delete(user)
+  end
+
   def authenticate_user(email, password) do
     user = get_user_by_email(email)
 
     cond do
+      user && user.disabled -> {:error, :disabled}
       user && User.valid_password?(user, password) -> {:ok, user}
       user -> {:error, :bad_password}
       true -> {:error, :not_found}
@@ -52,8 +82,12 @@ defmodule Quadman.Accounts do
 
   def verify_user_token(token) do
     case Phoenix.Token.verify(QuadmanWeb.Endpoint, @token_salt, token, max_age: @token_max_age) do
-      {:ok, user_id} -> {:ok, get_user!(user_id)}
-      {:error, reason} -> {:error, reason}
+      {:ok, user_id} ->
+        user = get_user!(user_id)
+        if user.disabled, do: {:error, :disabled}, else: {:ok, user}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 end

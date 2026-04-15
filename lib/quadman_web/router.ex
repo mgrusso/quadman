@@ -39,6 +39,7 @@ defmodule QuadmanWeb.Router do
       live "/stacks", StacksLive
       live "/stacks/:id", StackDetailLive
       live "/deployments/:id", DeploymentDetailLive
+      live "/users", UsersLive
       live "/settings", SettingsLive
     end
   end

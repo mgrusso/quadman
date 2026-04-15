@@ -17,6 +17,11 @@ defmodule QuadmanWeb.AuthController do
         |> put_session(:user_token, token)
         |> redirect(to: ~p"/")
 
+      {:error, :disabled} ->
+        conn
+        |> put_layout(html: {QuadmanWeb.Layouts, :root})
+        |> render(:login, error: "This account has been disabled.")
+
       {:error, _} ->
         conn
         |> put_layout(html: {QuadmanWeb.Layouts, :root})

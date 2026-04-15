@@ -10,6 +10,7 @@ defmodule Quadman.Accounts.User do
     field :hashed_password, :string
     field :password, :string, virtual: true
     field :role, :string, default: "admin"
+    field :disabled, :boolean, default: false
 
     timestamps(type: :utc_datetime)
   end
@@ -23,6 +24,12 @@ defmodule Quadman.Accounts.User do
     |> validate_length(:password, min: 8, max: 72)
     |> unique_constraint(:email)
     |> put_hashed_password()
+  end
+
+  def admin_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:role, :disabled])
+    |> validate_inclusion(:role, ["admin", "user"])
   end
 
   defp put_hashed_password(changeset) do
