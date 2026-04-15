@@ -136,8 +136,10 @@ defmodule QuadmanWeb.ServiceLogsLive do
   end
 
   defp open_port(exe, args, env_cl \\ []) do
+    home = System.get_env("HOME", "/opt/quadman")
+
     port_opts =
-      [args: args, stderr_to_stdout: true, exit_status: true] ++
+      [args: args, stderr_to_stdout: true, exit_status: true, cd: home] ++
         if(env_cl != [], do: [env: env_cl], else: [])
 
     try do
@@ -148,7 +150,7 @@ defmodule QuadmanWeb.ServiceLogsLive do
     end
   end
 
-  # String env for System.cmd
+  # String env for System.cmd (inspect check)
   defp podman_env_str do
     home = System.get_env("HOME", "/opt/quadman")
     {uid, _} = System.cmd("id", ["-u"])

@@ -206,7 +206,8 @@ defmodule QuadmanWeb.SettingsLive do
       exe ->
         env_cl = podman_env_cl()
         args = ["logs", "--follow", "--names", "--tail", "200", "systemd-caddy"]
-        port_opts = [args: args, stderr_to_stdout: true, exit_status: true, env: env_cl]
+        home = System.get_env("HOME", "/opt/quadman")
+        port_opts = [args: args, stderr_to_stdout: true, exit_status: true, env: env_cl, cd: home]
 
         port =
           try do
