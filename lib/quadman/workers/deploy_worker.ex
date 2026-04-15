@@ -93,6 +93,17 @@ defmodule Quadman.Workers.DeployWorker do
         stack.name
       end
 
+    # Create host-side volume directories if they don't exist yet
+    Enum.each(service.volumes, fn mapping ->
+      host_path = mapping |> String.split(":") |> List.first()
+      if host_path && !String.starts_with?(host_path, "/") == false do
+        case File.mkdir_p(host_path) do
+          :ok -> log.("Ensured volume directory: #{host_path}", "info")
+          {:error, reason} -> log.("Could not create #{host_path}: #{reason}", "warn")
+        end
+      end
+    end)
+
     with :ok <- Quadlets.write_secrets(service, env_vars),
          {:ok, path} <- Quadlets.write_container(service, env_vars, stack_name) do
       unit_name = Quadlets.unit_name(service.name)
