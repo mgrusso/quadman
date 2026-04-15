@@ -49,7 +49,9 @@ jobs:
         run: mix assets.deploy
 
       - name: Build release
-        run: mix release
+        run: |
+          rm -f _build/prod/quadman-*.tar.gz
+          mix release
 
       - name: Rename tarball to stable filename
         run: mv _build/prod/quadman-*.tar.gz quadman-linux-x86_64.tar.gz
