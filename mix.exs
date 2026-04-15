@@ -4,7 +4,7 @@ defmodule Quadman.MixProject do
   def project do
     [
       app: :quadman,
-      version: "0.3.6",
+      version: "0.3.7",
       elixir: "~> 1.14",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,

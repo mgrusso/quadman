@@ -201,14 +201,43 @@ defmodule Quadman.Workers.DeployWorker do
     container_name = "systemd-#{service.name}"
     podman = System.find_executable("podman") || "/usr/bin/podman"
 
+    # podman logs works on stopped/exited containers; exit 125 means not found.
     case System.cmd(podman, ["logs", "--tail", "100", container_name],
            stderr_to_stdout: true) do
-      {output, _} when output != "" ->
+      {output, 0} when output != "" ->
         log.("--- Container output ---", "warn")
+        output |> String.split("\n", trim: true) |> Enum.each(&log.(&1, "info"))
 
-        output
-        |> String.split("\n", trim: true)
-        |> Enum.each(&log.(&1, "info"))
+      _ ->
+        # Container was never created — fall back to journalctl via the lingering
+        # user session DBUS socket (at /run/user/<uid>/bus).
+        collect_journalctl_logs(service.name, log)
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp collect_journalctl_logs(service_name, log) do
+    unit = "#{service_name}.service"
+    journalctl = System.find_executable("journalctl") || "/usr/bin/journalctl"
+
+    case System.cmd("id", ["-u"]) do
+      {uid_str, 0} ->
+        uid = String.trim(uid_str)
+        dbus_socket = "/run/user/#{uid}/bus"
+
+        {output, _} =
+          System.cmd(
+            journalctl,
+            ["--user-unit", unit, "--no-pager", "-n", "100", "--output", "short"],
+            stderr_to_stdout: true,
+            env: [{"DBUS_SESSION_BUS_ADDRESS", "unix:path=#{dbus_socket}"}]
+          )
+
+        if String.trim(output) != "" do
+          log.("--- systemd journal (#{unit}) ---", "warn")
+          output |> String.split("\n", trim: true) |> Enum.each(&log.(&1, "info"))
+        end
 
       _ ->
         :ok

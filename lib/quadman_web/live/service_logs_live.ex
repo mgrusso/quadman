@@ -81,30 +81,66 @@ defmodule QuadmanWeb.ServiceLogsLive do
 
     tail_args = if tail == "all", do: [], else: ["--tail", tail]
 
-    args = ["logs", "--follow", "--names"] ++ tail_args ++ [container_name]
+    # Try podman logs first (works for running or stopped containers).
+    # If that fails (container doesn't exist), fall back to journalctl using
+    # the lingering user session DBUS socket.
+    case open_podman_log_port(container_name, tail_args) do
+      {:ok, port} ->
+        socket |> assign(:port, port) |> assign(:streaming, true) |> assign(:buffer, "")
 
-    case find_executable("podman") do
-      nil ->
+      {:error, :no_podman} ->
         put_flash(socket, :error, "podman not found. Check server PATH.")
 
-      exe ->
-        port =
-          try do
-            Port.open(
-              {:spawn_executable, exe},
-              args: args,
-              stderr_to_stdout: true,
-              exit_status: true
-            )
-          rescue
-            e -> {:error, e}
-          end
+      {:error, _} ->
+        case open_journalctl_port(service.name, tail_args) do
+          {:ok, port} ->
+            socket |> assign(:port, port) |> assign(:streaming, true) |> assign(:buffer, "")
 
-        if is_port(port) do
-          socket |> assign(:port, port) |> assign(:streaming, true) |> assign(:buffer, "")
-        else
-          put_flash(socket, :error, "Could not start log stream.")
+          _ ->
+            put_flash(socket, :error, "No logs available — container has not been created yet.")
         end
+    end
+  end
+
+  defp open_podman_log_port(container_name, tail_args) do
+    case find_executable("podman") do
+      nil ->
+        {:error, :no_podman}
+
+      exe ->
+        args = ["logs", "--follow", "--names"] ++ tail_args ++ [container_name]
+        open_port(exe, args)
+    end
+  end
+
+  defp open_journalctl_port(service_name, _tail_args) do
+    unit = "#{service_name}.service"
+
+    with {:ok, uid} <- get_uid(),
+         exe when exe != nil <- (System.find_executable("journalctl") || "/usr/bin/journalctl"),
+         dbus = "unix:path=/run/user/#{uid}/bus",
+         args = ["--user-unit", unit, "--no-pager", "--follow", "--output", "short"] do
+      open_port(exe, args, env: [{"DBUS_SESSION_BUS_ADDRESS", dbus}])
+    else
+      _ -> {:error, :unavailable}
+    end
+  end
+
+  defp open_port(exe, args, opts \\ []) do
+    port_opts = [args: args, stderr_to_stdout: true, exit_status: true] ++ opts
+
+    try do
+      port = Port.open({:spawn_executable, exe}, port_opts)
+      if is_port(port), do: {:ok, port}, else: {:error, :failed}
+    rescue
+      e -> {:error, e}
+    end
+  end
+
+  defp get_uid do
+    case System.cmd("id", ["-u"]) do
+      {uid_str, 0} -> {:ok, String.trim(uid_str)}
+      _ -> {:error, :unknown}
     end
   end
 
