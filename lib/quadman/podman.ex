@@ -118,4 +118,40 @@ defmodule Quadman.Podman do
       _ -> {:error, :unreachable}
     end
   end
+
+  @doc """
+  List all Podman volumes. Returns `{:ok, [volume_map]}` or `{:error, reason}`.
+  """
+  def list_volumes do
+    case Req.get(base_req(), url: "/volumes/json") do
+      {:ok, %{status: 200, body: body}} -> {:ok, List.wrap(body)}
+      {:ok, %{status: status, body: body}} -> {:error, "list volumes #{status}: #{inspect(body)}"}
+      {:error, reason} -> {:error, inspect(reason)}
+    end
+  end
+
+  @doc """
+  Create a named volume. Idempotent — returns `:ok` if the volume already exists.
+  Returns `:ok` or `{:error, reason}`.
+  """
+  def create_volume(name) do
+    case Req.post(base_req(), url: "/volumes/create", json: %{"Name" => name}) do
+      {:ok, %{status: s}} when s in [200, 201] -> :ok
+      {:ok, %{status: 409}} -> :ok
+      {:ok, %{status: status, body: body}} -> {:error, "create volume #{status}: #{inspect(body)}"}
+      {:error, reason} -> {:error, inspect(reason)}
+    end
+  end
+
+  @doc """
+  Delete a named volume. Returns `:ok` if deleted or not found.
+  Returns `:ok` or `{:error, reason}`.
+  """
+  def delete_volume(name) do
+    case Req.delete(base_req(), url: "/volumes/#{URI.encode(name, &URI.char_unreserved?/1)}") do
+      {:ok, %{status: s}} when s in [204, 404] -> :ok
+      {:ok, %{status: status, body: body}} -> {:error, "delete volume #{status}: #{inspect(body)}"}
+      {:error, reason} -> {:error, inspect(reason)}
+    end
+  end
 end

@@ -88,14 +88,27 @@ defmodule Quadman.Workers.DeployWorker do
     log.("Writing Quadlet files...", "info")
     env_vars = service.environment_variables
 
-    # Create host-side volume directories if they don't exist yet
+    # Ensure volumes exist before writing the Quadlet:
+    #   - left side starts with "/" → bind mount, mkdir_p the host path
+    #   - left side has no "/" → named Podman volume, create via API
     Enum.each(service.volumes, fn mapping ->
       host_path = mapping |> String.split(":") |> List.first()
-      if host_path && !String.starts_with?(host_path, "/") == false do
-        case File.mkdir_p(host_path) do
-          :ok -> log.("Ensured volume directory: #{host_path}", "info")
-          {:error, reason} -> log.("Could not create #{host_path}: #{reason}", "warn")
-        end
+
+      cond do
+        is_nil(host_path) ->
+          :ok
+
+        String.starts_with?(host_path, "/") ->
+          case File.mkdir_p(host_path) do
+            :ok -> log.("Ensured bind-mount directory: #{host_path}", "info")
+            {:error, reason} -> log.("Could not create #{host_path}: #{reason}", "warn")
+          end
+
+        true ->
+          case Podman.create_volume(host_path) do
+            :ok -> log.("Ensured named volume: #{host_path}", "info")
+            {:error, reason} -> log.("Could not create volume #{host_path}: #{reason}", "warn")
+          end
       end
     end)
 

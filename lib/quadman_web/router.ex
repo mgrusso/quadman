@@ -38,6 +38,7 @@ defmodule QuadmanWeb.Router do
       live "/services/:id/logs", ServiceLogsLive
       live "/stacks", StacksLive
       live "/stacks/:id", StackDetailLive
+      live "/volumes", VolumesLive
       live "/deployments/:id", DeploymentDetailLive
       live "/users", UsersLive
       live "/settings", SettingsLive

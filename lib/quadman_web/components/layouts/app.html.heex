@@ -9,6 +9,7 @@
       <.nav_link href={~p"/"} current_path={@current_path} icon="hero-squares-2x2" label="Dashboard" />
       <.nav_link href={~p"/services"} current_path={@current_path} icon="hero-cube" label="Services" />
       <.nav_link href={~p"/stacks"} current_path={@current_path} icon="hero-rectangle-stack" label="Stacks" />
+      <.nav_link href={~p"/volumes"} current_path={@current_path} icon="hero-circle-stack" label="Volumes" />
       <%= if @current_user.role == "admin" do %>
         <.nav_link href={~p"/users"} current_path={@current_path} icon="hero-users" label="Users" />
         <.nav_link href={~p"/settings"} current_path={@current_path} icon="hero-cog-6-tooth" label="Settings" />
