@@ -32,6 +32,14 @@ defmodule Quadman.Accounts.User do
     |> validate_inclusion(:role, ["admin", "user"])
   end
 
+  def password_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:password])
+    |> validate_required([:password])
+    |> validate_length(:password, min: 8, max: 72)
+    |> put_hashed_password()
+  end
+
   defp put_hashed_password(changeset) do
     case get_change(changeset, :password) do
       nil -> changeset

@@ -10,6 +10,8 @@ defmodule QuadmanWeb.UsersLive do
      |> assign(:page_title, "Users")
      |> assign(:show_create, false)
      |> assign(:create_error, nil)
+     |> assign(:set_password_user_id, nil)
+     |> assign(:set_password_error, nil)
      |> load_users()}
   end
 
@@ -41,6 +43,34 @@ defmodule QuadmanWeb.UsersLive do
           |> Enum.map_join(", ", fn {_field, msgs} -> Enum.join(msgs, ", ") end)
 
         {:noreply, assign(socket, create_error: error)}
+    end
+  end
+
+  def handle_event("show_set_password", %{"id" => id}, socket) do
+    {:noreply, assign(socket, set_password_user_id: id, set_password_error: nil, show_create: false)}
+  end
+
+  def handle_event("hide_set_password", _, socket) do
+    {:noreply, assign(socket, set_password_user_id: nil, set_password_error: nil)}
+  end
+
+  def handle_event("set_password", %{"user_id" => id, "password" => password}, socket) do
+    user = Accounts.get_user!(id)
+
+    case Accounts.set_password(user, password) do
+      {:ok, _} ->
+        {:noreply,
+         socket
+         |> assign(set_password_user_id: nil, set_password_error: nil)
+         |> put_flash(:info, "Password updated for #{user.email}.")}
+
+      {:error, changeset} ->
+        error =
+          changeset
+          |> Ecto.Changeset.traverse_errors(fn {msg, _} -> msg end)
+          |> Enum.map_join(", ", fn {_field, msgs} -> Enum.join(msgs, ", ") end)
+
+        {:noreply, assign(socket, :set_password_error, error)}
     end
   end
 
@@ -177,6 +207,49 @@ defmodule QuadmanWeb.UsersLive do
         </div>
       <% end %>
 
+      <%!-- Set password panel --%>
+      <%= if @set_password_user_id do %>
+        <% target = Enum.find(@users, &(&1.id == @set_password_user_id)) %>
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+          <h2 class="font-semibold text-white mb-1">Set password</h2>
+          <p class="text-sm text-gray-400 mb-4"><%= target && target.email %></p>
+
+          <%= if @set_password_error do %>
+            <div class="mb-4 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
+              <%= @set_password_error %>
+            </div>
+          <% end %>
+
+          <form phx-submit="set_password" class="flex items-end gap-3">
+            <input type="hidden" name="user_id" value={@set_password_user_id} />
+            <div>
+              <label class="block text-sm font-medium text-gray-300 mb-1">New password</label>
+              <input
+                type="password"
+                name="password"
+                required
+                minlength="8"
+                autocomplete="new-password"
+                class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+            <button
+              type="submit"
+              class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors"
+            >
+              Set password
+            </button>
+            <button
+              type="button"
+              phx-click="hide_set_password"
+              class="text-sm text-gray-400 hover:text-white transition-colors"
+            >
+              Cancel
+            </button>
+          </form>
+        </div>
+      <% end %>
+
       <%!-- Users table --%>
       <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
         <table class="w-full text-sm">
@@ -224,6 +297,14 @@ defmodule QuadmanWeb.UsersLive do
                 </td>
                 <td class="px-5 py-3">
                   <div class="flex items-center justify-end gap-2">
+                    <button
+                      phx-click="show_set_password"
+                      phx-value-id={user.id}
+                      title="Set password"
+                      class="text-xs px-2 py-1 rounded border border-gray-700 text-gray-400 hover:border-indigo-500 hover:text-indigo-400 transition-colors"
+                    >
+                      Set pwd
+                    </button>
                     <button
                       phx-click="toggle_admin"
                       phx-value-id={user.id}

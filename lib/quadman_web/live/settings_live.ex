@@ -1,7 +1,7 @@
 defmodule QuadmanWeb.SettingsLive do
   use QuadmanWeb, :live_view
 
-  alias Quadman.{Podman, Caddy, CaddyContainer, AppSettings, Updater}
+  alias Quadman.{Podman, Caddy, CaddyContainer, AppSettings, Updater, Accounts}
 
   @max_log_lines 500
   @podman_candidates ~w(/usr/bin/podman /bin/podman /usr/local/bin/podman)
@@ -14,6 +14,8 @@ defmodule QuadmanWeb.SettingsLive do
     {:ok,
      socket
      |> assign(:page_title, "Settings")
+     |> assign(:password_error, nil)
+     |> assign(:password_ok, false)
      |> assign(:current_version, Updater.current_version())
      |> assign(:update_state, :idle)
      |> assign(:latest_release, nil)
@@ -30,6 +32,34 @@ defmodule QuadmanWeb.SettingsLive do
 
   @impl true
   def handle_params(_params, _uri, socket), do: {:noreply, socket}
+
+  # ---------------------------------------------------------------------------
+  # Account
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def handle_event("change_password", %{"current_password" => current, "password" => new_pass}, socket) do
+    user = socket.assigns.current_user
+
+    case Accounts.change_password(user, current, new_pass) do
+      {:ok, _} ->
+        {:noreply,
+         socket
+         |> assign(:password_ok, true)
+         |> assign(:password_error, nil)}
+
+      {:error, :invalid_current_password} ->
+        {:noreply, assign(socket, password_error: "Current password is incorrect.", password_ok: false)}
+
+      {:error, changeset} ->
+        error =
+          changeset
+          |> Ecto.Changeset.traverse_errors(fn {msg, _} -> msg end)
+          |> Enum.map_join(", ", fn {_field, msgs} -> Enum.join(msgs, ", ") end)
+
+        {:noreply, assign(socket, password_error: error, password_ok: false)}
+    end
+  end
 
   # ---------------------------------------------------------------------------
   # Version / Updates
@@ -301,6 +331,55 @@ defmodule QuadmanWeb.SettingsLive do
     ~H"""
     <div class="p-8 max-w-3xl mx-auto">
       <h1 class="text-2xl font-bold text-white mb-6">Settings</h1>
+
+      <%!-- Account --%>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl mb-6">
+        <div class="px-5 py-4 border-b border-gray-800">
+          <h2 class="font-semibold text-white">Account</h2>
+          <p class="text-xs text-gray-500 mt-0.5"><%= @current_user.email %></p>
+        </div>
+        <div class="px-5 py-4">
+          <h3 class="text-sm font-medium text-gray-300 mb-3">Change password</h3>
+          <%= if @password_ok do %>
+            <div class="mb-3 flex items-center gap-2 text-emerald-400 text-sm">
+              <span class="w-2 h-2 bg-emerald-400 rounded-full"></span>
+              Password updated successfully.
+            </div>
+          <% end %>
+          <%= if @password_error do %>
+            <div class="mb-3 text-sm text-red-400"><%= @password_error %></div>
+          <% end %>
+          <form phx-submit="change_password" class="flex items-end gap-3">
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">Current password</label>
+              <input
+                type="password"
+                name="current_password"
+                required
+                autocomplete="current-password"
+                class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">New password</label>
+              <input
+                type="password"
+                name="password"
+                required
+                minlength="8"
+                autocomplete="new-password"
+                class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+            <button
+              type="submit"
+              class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors"
+            >
+              Update
+            </button>
+          </form>
+        </div>
+      </div>
 
       <%!-- Version & updates --%>
       <div class="bg-gray-900 border border-gray-800 rounded-xl mb-6">

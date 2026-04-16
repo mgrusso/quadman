@@ -32,7 +32,15 @@ defmodule QuadmanWeb.ServicesLive do
     {:noreply, assign(socket, :form, to_form(changeset, action: :validate))}
   end
 
-  def handle_event("save", %{"service" => params}, socket) do
+  def handle_event("save", %{"service" => params} = all_params, socket) do
+    port_mappings = parse_lines(Map.get(all_params, "port_mappings_text", ""))
+    volumes = parse_lines(Map.get(all_params, "volumes_text", ""))
+
+    params =
+      params
+      |> Map.put("port_mappings", port_mappings)
+      |> Map.put("volumes", volumes)
+
     case Services.create_service(params) do
       {:ok, service} ->
         {:noreply,
@@ -63,6 +71,13 @@ defmodule QuadmanWeb.ServicesLive do
   @impl true
   def handle_info({:status_update, _}, socket) do
     {:noreply, assign(socket, :services, Services.list_services_with_stack())}
+  end
+
+  defp parse_lines(text) do
+    text
+    |> String.split("\n")
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
   end
 
   @impl true
@@ -175,6 +190,29 @@ defmodule QuadmanWeb.ServicesLive do
           <.input field={@form[:resource_cpu]} label="CPU limit (e.g. 50%)" placeholder="optional" class="bg-gray-800 border-gray-700 text-white" />
           <.input field={@form[:resource_mem]} label="Memory limit (e.g. 512M)" placeholder="optional" class="bg-gray-800 border-gray-700 text-white" />
           <.input field={@form[:domain]} label="Domain (optional)" placeholder="app.example.com — enables Caddy reverse proxy" class="bg-gray-800 border-gray-700 text-white" />
+
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-300 mb-1">Port mappings (optional)</label>
+              <textarea
+                name="port_mappings_text"
+                rows="3"
+                placeholder={"8080:80\n443:443"}
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none"
+              ></textarea>
+              <p class="text-xs text-gray-600 mt-1">One per line, e.g. <span class="font-mono">8080:80</span></p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-300 mb-1">Volumes (optional)</label>
+              <textarea
+                name="volumes_text"
+                rows="3"
+                placeholder={"/data/app:/app/data"}
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none"
+              ></textarea>
+              <p class="text-xs text-gray-600 mt-1">One per line, e.g. <span class="font-mono">/host:/container</span></p>
+            </div>
+          </div>
 
           <div class="flex justify-end gap-3 pt-2">
             <button type="button" phx-click="close_modal" class="text-sm text-gray-400 hover:text-white px-4 py-2">

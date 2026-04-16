@@ -65,6 +65,22 @@ defmodule Quadman.Accounts do
     Repo.delete(user)
   end
 
+  def change_password(%User{} = user, current_password, new_password) do
+    if User.valid_password?(user, current_password) do
+      user
+      |> User.password_changeset(%{password: new_password})
+      |> Repo.update()
+    else
+      {:error, :invalid_current_password}
+    end
+  end
+
+  def set_password(%User{} = user, new_password) do
+    user
+    |> User.password_changeset(%{password: new_password})
+    |> Repo.update()
+  end
+
   def authenticate_user(email, password) do
     user = get_user_by_email(email)
 
