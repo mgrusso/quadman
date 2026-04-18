@@ -24,6 +24,20 @@ defmodule QuadmanWeb.AuthHook do
     end
   end
 
+  def on_mount(:require_admin, params, session, socket) do
+    case on_mount(:require_authenticated_user, params, session, socket) do
+      {:cont, socket} ->
+        if socket.assigns.current_user.role == "admin" do
+          {:cont, socket}
+        else
+          {:halt, socket |> put_flash(:error, "Admin access required.") |> redirect(to: "/")}
+        end
+
+      halt ->
+        halt
+    end
+  end
+
   def on_mount(:mount_current_user, _params, session, socket) do
     {:cont, mount_current_user(socket, session)}
   end

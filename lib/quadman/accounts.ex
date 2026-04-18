@@ -1,7 +1,7 @@
 defmodule Quadman.Accounts do
   import Ecto.Query
   alias Quadman.Repo
-  alias Quadman.Accounts.User
+  alias Quadman.Accounts.{User, UserToken}
 
   @token_salt "user_auth"
   @token_max_age 14 * 24 * 60 * 60
@@ -67,18 +67,28 @@ defmodule Quadman.Accounts do
 
   def change_password(%User{} = user, current_password, new_password) do
     if User.valid_password?(user, current_password) do
-      user
-      |> User.password_changeset(%{password: new_password})
-      |> Repo.update()
+      case user |> User.password_changeset(%{password: new_password}) |> Repo.update() do
+        {:ok, updated} ->
+          revoke_all_tokens_for_user(user.id)
+          {:ok, updated}
+
+        err ->
+          err
+      end
     else
       {:error, :invalid_current_password}
     end
   end
 
   def set_password(%User{} = user, new_password) do
-    user
-    |> User.password_changeset(%{password: new_password})
-    |> Repo.update()
+    case user |> User.password_changeset(%{password: new_password}) |> Repo.update() do
+      {:ok, updated} ->
+        revoke_all_tokens_for_user(user.id)
+        {:ok, updated}
+
+      err ->
+        err
+    end
   end
 
   def authenticate_user(email, password) do
@@ -93,17 +103,37 @@ defmodule Quadman.Accounts do
   end
 
   def generate_user_token(user) do
-    Phoenix.Token.sign(QuadmanWeb.Endpoint, @token_salt, user.id)
+    token = Phoenix.Token.sign(QuadmanWeb.Endpoint, @token_salt, user.id)
+
+    Repo.insert!(%UserToken{
+      user_id: user.id,
+      token_hash: UserToken.hash(token)
+    })
+
+    token
   end
 
   def verify_user_token(token) do
-    case Phoenix.Token.verify(QuadmanWeb.Endpoint, @token_salt, token, max_age: @token_max_age) do
-      {:ok, user_id} ->
-        user = get_user!(user_id)
-        if user.disabled, do: {:error, :disabled}, else: {:ok, user}
-
-      {:error, reason} ->
-        {:error, reason}
+    with {:ok, user_id} <-
+           Phoenix.Token.verify(QuadmanWeb.Endpoint, @token_salt, token, max_age: @token_max_age),
+         hash = UserToken.hash(token),
+         %UserToken{} <- Repo.get_by(UserToken, token_hash: hash, user_id: user_id) do
+      user = get_user!(user_id)
+      if user.disabled, do: {:error, :disabled}, else: {:ok, user}
+    else
+      nil -> {:error, :revoked}
+      {:error, reason} -> {:error, reason}
     end
+  end
+
+  def revoke_token(token) when is_binary(token) do
+    hash = UserToken.hash(token)
+    Repo.delete_all(from t in UserToken, where: t.token_hash == ^hash)
+    :ok
+  end
+
+  def revoke_all_tokens_for_user(user_id) do
+    Repo.delete_all(from t in UserToken, where: t.user_id == ^user_id)
+    :ok
   end
 end

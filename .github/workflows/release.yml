@@ -64,9 +64,14 @@ jobs:
           test -n "$TARBALL" || (echo "ERROR: no tarball found" && exit 1)
           mv "$TARBALL" quadman-linux-x86_64.tar.gz
 
+      - name: Generate SHA256 checksum
+        run: sha256sum quadman-linux-x86_64.tar.gz > quadman-linux-x86_64.tar.gz.sha256
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: quadman-linux-x86_64.tar.gz
+          files: |
+            quadman-linux-x86_64.tar.gz
+            quadman-linux-x86_64.tar.gz.sha256
           name: Quadman ${{ github.ref_name }}
           generate_release_notes: true

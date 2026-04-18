@@ -33,25 +33,27 @@ defmodule QuadmanWeb.ServicesLive do
   end
 
   def handle_event("save", %{"service" => params} = all_params, socket) do
-    port_mappings = parse_lines(Map.get(all_params, "port_mappings_text", ""))
-    volumes = parse_lines(Map.get(all_params, "volumes_text", ""))
+    with_admin(socket, fn ->
+      port_mappings = parse_lines(Map.get(all_params, "port_mappings_text", ""))
+      volumes = parse_lines(Map.get(all_params, "volumes_text", ""))
 
-    params =
-      params
-      |> Map.put("port_mappings", port_mappings)
-      |> Map.put("volumes", volumes)
+      params =
+        params
+        |> Map.put("port_mappings", port_mappings)
+        |> Map.put("volumes", volumes)
 
-    case Services.create_service(params) do
-      {:ok, service} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "Service \"#{service.name}\" created.")
-         |> assign(:services, Services.list_services_with_stack())
-         |> push_patch(to: ~p"/services")}
+      case Services.create_service(params) do
+        {:ok, service} ->
+          {:noreply,
+           socket
+           |> put_flash(:info, "Service \"#{service.name}\" created.")
+           |> assign(:services, Services.list_services_with_stack())
+           |> push_patch(to: ~p"/services")}
 
-      {:error, changeset} ->
-        {:noreply, assign(socket, :form, to_form(changeset))}
-    end
+        {:error, changeset} ->
+          {:noreply, assign(socket, :form, to_form(changeset))}
+      end
+    end)
   end
 
   def handle_event("close_modal", _params, socket) do
@@ -59,18 +61,28 @@ defmodule QuadmanWeb.ServicesLive do
   end
 
   def handle_event("delete", %{"id" => id}, socket) do
-    service = Services.get_service!(id)
-    {:ok, _} = Services.delete_service(service)
+    with_admin(socket, fn ->
+      service = Services.get_service!(id)
+      {:ok, _} = Services.delete_service(service)
 
-    {:noreply,
-     socket
-     |> put_flash(:info, "Service deleted.")
-     |> assign(:services, Services.list_services_with_stack())}
+      {:noreply,
+       socket
+       |> put_flash(:info, "Service deleted.")
+       |> assign(:services, Services.list_services_with_stack())}
+    end)
   end
 
   @impl true
   def handle_info({:status_update, _}, socket) do
     {:noreply, assign(socket, :services, Services.list_services_with_stack())}
+  end
+
+  defp with_admin(socket, fun) do
+    if socket.assigns.current_user.role == "admin" do
+      fun.()
+    else
+      {:noreply, put_flash(socket, :error, "Admin access required.")}
+    end
   end
 
   defp parse_lines(text) do

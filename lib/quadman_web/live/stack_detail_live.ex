@@ -24,34 +24,38 @@ defmodule QuadmanWeb.StackDetailLive do
 
   @impl true
   def handle_event("deploy_all", _params, socket) do
-    stack = socket.assigns.stack
-    user = socket.assigns.current_user
+    with_admin(socket, fn ->
+      stack = socket.assigns.stack
+      user = socket.assigns.current_user
 
-    results =
-      Enum.map(stack.services, fn svc ->
-        Deployments.deploy_service(svc.id, user.id)
-      end)
+      results =
+        Enum.map(stack.services, fn svc ->
+          Deployments.deploy_service(svc.id, user.id)
+        end)
 
-    errors = Enum.filter(results, &match?({:error, _}, &1))
+      errors = Enum.filter(results, &match?({:error, _}, &1))
 
-    if errors == [] do
-      {:noreply, put_flash(socket, :info, "Deployments queued for all #{length(stack.services)} services.")}
-    else
-      {:noreply, put_flash(socket, :error, "#{length(errors)} deployment(s) failed to queue.")}
-    end
+      if errors == [] do
+        {:noreply, put_flash(socket, :info, "Deployments queued for all #{length(stack.services)} services.")}
+      else
+        {:noreply, put_flash(socket, :error, "#{length(errors)} deployment(s) failed to queue.")}
+      end
+    end)
   end
 
   def handle_event("assign_service", %{"service_id" => svc_id}, socket) do
-    service = Services.get_service!(svc_id)
-    Services.update_service(service, %{stack_id: socket.assigns.stack.id})
+    with_admin(socket, fn ->
+      service = Services.get_service!(svc_id)
+      Services.update_service(service, %{stack_id: socket.assigns.stack.id})
 
-    stack = Stacks.get_stack_with_services!(socket.assigns.stack.id)
-    all_services = Services.list_services()
+      stack = Stacks.get_stack_with_services!(socket.assigns.stack.id)
+      all_services = Services.list_services()
 
-    {:noreply,
-     socket
-     |> assign(:stack, stack)
-     |> assign(:unassigned_services, unassigned(all_services, stack))}
+      {:noreply,
+       socket
+       |> assign(:stack, stack)
+       |> assign(:unassigned_services, unassigned(all_services, stack))}
+    end)
   end
 
   def handle_event("confirm_delete_stack", _params, socket) do
@@ -63,32 +67,44 @@ defmodule QuadmanWeb.StackDetailLive do
   end
 
   def handle_event("delete_stack", _params, socket) do
-    stack = socket.assigns.stack
-    {:ok, _} = Stacks.delete_stack(stack)
+    with_admin(socket, fn ->
+      stack = socket.assigns.stack
+      {:ok, _} = Stacks.delete_stack(stack)
 
-    {:noreply,
-     socket
-     |> put_flash(:info, "Stack \"#{stack.name}\" deleted.")
-     |> push_navigate(to: ~p"/stacks")}
+      {:noreply,
+       socket
+       |> put_flash(:info, "Stack \"#{stack.name}\" deleted.")
+       |> push_navigate(to: ~p"/stacks")}
+    end)
   end
 
   def handle_event("remove_service", %{"service_id" => svc_id}, socket) do
-    service = Services.get_service!(svc_id)
-    Services.update_service(service, %{stack_id: nil})
+    with_admin(socket, fn ->
+      service = Services.get_service!(svc_id)
+      Services.update_service(service, %{stack_id: nil})
 
-    stack = Stacks.get_stack_with_services!(socket.assigns.stack.id)
-    all_services = Services.list_services()
+      stack = Stacks.get_stack_with_services!(socket.assigns.stack.id)
+      all_services = Services.list_services()
 
-    {:noreply,
-     socket
-     |> assign(:stack, stack)
-     |> assign(:unassigned_services, unassigned(all_services, stack))}
+      {:noreply,
+       socket
+       |> assign(:stack, stack)
+       |> assign(:unassigned_services, unassigned(all_services, stack))}
+    end)
   end
 
   @impl true
   def handle_info({:status_update, _}, socket) do
     stack = Stacks.get_stack_with_services!(socket.assigns.stack.id)
     {:noreply, assign(socket, :stack, stack)}
+  end
+
+  defp with_admin(socket, fun) do
+    if socket.assigns.current_user.role == "admin" do
+      fun.()
+    else
+      {:noreply, put_flash(socket, :error, "Admin access required.")}
+    end
   end
 
   defp unassigned(all_services, stack) do

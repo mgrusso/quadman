@@ -38,8 +38,31 @@ defmodule Quadman.Services.Service do
     |> validate_format(:domain, ~r/^[a-z0-9][a-z0-9.\-]*\.[a-z]{2,}$/, message: "must be a valid hostname")
     |> validate_inclusion(:restart_policy, @valid_restart_policies)
     |> validate_inclusion(:status, @valid_statuses)
+    |> validate_volumes()
     |> unique_constraint(:name)
     |> unique_constraint(:domain)
+  end
+
+  defp validate_volumes(changeset) do
+    validate_change(changeset, :volumes, fn :volumes, volumes ->
+      bad =
+        Enum.reject(volumes, fn mapping ->
+          host = mapping |> String.split(":", parts: 3) |> List.first()
+
+          cond do
+            # Named Podman volume (no leading slash): always OK
+            not String.starts_with?(host, "/") -> true
+            # Absolute bind-mount path: reject if any segment is ".."
+            true -> host |> Path.split() |> Enum.all?(&(&1 != ".."))
+          end
+        end)
+
+      if bad == [] do
+        []
+      else
+        [{:volumes, "contains invalid host path (path traversal not allowed): #{Enum.join(bad, ", ")}"}]
+      end
+    end)
   end
 
   def status_changeset(service, status) do

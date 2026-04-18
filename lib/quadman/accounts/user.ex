@@ -9,7 +9,7 @@ defmodule Quadman.Accounts.User do
     field :email, :string
     field :hashed_password, :string
     field :password, :string, virtual: true
-    field :role, :string, default: "admin"
+    field :role, :string, default: "user"
     field :disabled, :boolean, default: false
 
     timestamps(type: :utc_datetime)

@@ -14,6 +14,7 @@ defmodule Quadman.Updater do
 
   @github_repo "mgrusso/quadman"
   @tarball_name "quadman-linux-x86_64.tar.gz"
+  @sha256_name "quadman-linux-x86_64.tar.gz.sha256"
 
   # ---------------------------------------------------------------------------
   # Version info
@@ -40,12 +41,14 @@ defmodule Quadman.Updater do
         tag = body["tag_name"] || ""
         version = String.trim_leading(tag, "v")
         tarball_url = "https://github.com/#{@github_repo}/releases/download/#{tag}/#{@tarball_name}"
+        sha256_url = "https://github.com/#{@github_repo}/releases/download/#{tag}/#{@sha256_name}"
 
         {:ok,
          %{
            version: version,
            tag: tag,
            tarball_url: tarball_url,
+           sha256_url: sha256_url,
            notes: truncate_notes(body["body"] || "")
          }}
 
@@ -74,20 +77,25 @@ defmodule Quadman.Updater do
   This call will not return on success — the process is killed by the restart.
   Returns `{:error, reason}` if the download or extraction fails.
   """
-  def download_and_apply(tarball_url) do
+  def download_and_apply(tarball_url, sha256_url) do
     tmp = "/tmp/quadman-update-#{System.unique_integer([:positive])}.tar.gz"
+    tmp_sha256 = tmp <> ".sha256"
     install_dir = install_dir()
 
     Logger.info("Updater: downloading #{tarball_url}")
 
     with :ok <- download(tarball_url, tmp),
+         :ok <- download_text(sha256_url, tmp_sha256),
+         :ok <- verify_checksum(tmp, File.read!(tmp_sha256)),
          :ok <- extract(tmp, install_dir) do
       File.rm(tmp)
+      File.rm(tmp_sha256)
       Logger.info("Updater: extracted to #{install_dir}, restarting service")
       restart_service()
     else
       {:error, reason} = err ->
         File.rm(tmp)
+        File.rm(tmp_sha256)
         Logger.error("Updater: failed — #{inspect(reason)}")
         err
     end
@@ -110,8 +118,43 @@ defmodule Quadman.Updater do
     end
   end
 
+  defp download_text(url, dest) do
+    case Req.get(url,
+           headers: [{"user-agent", "quadman/#{current_version()}"}],
+           receive_timeout: 30_000,
+           redirect: true
+         ) do
+      {:ok, %{status: 200, body: body}} ->
+        File.write(dest, body)
+
+      {:ok, %{status: s}} ->
+        {:error, "checksum download failed: HTTP #{s}"}
+
+      {:error, reason} ->
+        {:error, "checksum download error: #{inspect(reason)}"}
+    end
+  end
+
+  defp verify_checksum(file, checksum_content) do
+    expected = checksum_content |> String.split() |> List.first() |> String.downcase()
+
+    actual =
+      file
+      |> File.read!()
+      |> then(&:crypto.hash(:sha256, &1))
+      |> Base.encode16(case: :lower)
+
+    if actual == expected do
+      :ok
+    else
+      {:error, "checksum mismatch — expected #{expected}, got #{actual}"}
+    end
+  end
+
   defp extract(tarball, dest) do
-    case System.cmd("tar", ["-xzf", tarball, "-C", dest], stderr_to_stdout: true) do
+    case System.cmd("tar", ["-xzf", tarball, "--strip-components=0", "-C", dest],
+           stderr_to_stdout: true
+         ) do
       {_, 0} -> :ok
       {output, code} -> {:error, "tar exited #{code}: #{String.trim(output)}"}
     end

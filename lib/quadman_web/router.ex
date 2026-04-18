@@ -40,8 +40,12 @@ defmodule QuadmanWeb.Router do
       live "/stacks/:id", StackDetailLive
       live "/volumes", VolumesLive
       live "/deployments/:id", DeploymentDetailLive
-      live "/users", UsersLive
       live "/settings", SettingsLive
+    end
+
+    live_session :admin,
+      on_mount: {QuadmanWeb.AuthHook, :require_admin} do
+      live "/users", UsersLive
     end
   end
 

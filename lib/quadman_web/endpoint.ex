@@ -7,7 +7,7 @@ defmodule QuadmanWeb.Endpoint do
   @session_options [
     store: :cookie,
     key: "_quadman_key",
-    signing_salt: "Fv8vpMgy",
+    signing_salt: "aIpxr3/p0DA",
     same_site: "Lax"
   ]
 

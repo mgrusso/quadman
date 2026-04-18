@@ -42,91 +42,99 @@ defmodule QuadmanWeb.ServiceDetailLive do
 
   @impl true
   def handle_event("start", _params, socket) do
-    socket = assign(socket, :action_loading, :start)
-    service = socket.assigns.service
-    unit = Quadlets.unit_name(service.name)
+    with_admin(socket, fn ->
+      socket = assign(socket, :action_loading, :start)
+      service = socket.assigns.service
+      unit = Quadlets.unit_name(service.name)
 
-    case Systemd.start(unit) do
-      :ok ->
-        Services.update_service_status(service, "running")
-        {:noreply,
-         socket
-         |> assign(:action_loading, nil)
-         |> assign(:service, Services.get_service_with_env!(service.id))
-         |> put_flash(:info, "Service started.")}
+      case Systemd.start(unit) do
+        :ok ->
+          Services.update_service_status(service, "running")
+          {:noreply,
+           socket
+           |> assign(:action_loading, nil)
+           |> assign(:service, Services.get_service_with_env!(service.id))
+           |> put_flash(:info, "Service started.")}
 
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> assign(:action_loading, nil)
-         |> put_flash(:error, "Failed to start: #{reason}")}
-    end
+        {:error, reason} ->
+          {:noreply,
+           socket
+           |> assign(:action_loading, nil)
+           |> put_flash(:error, "Failed to start: #{reason}")}
+      end
+    end)
   end
 
   def handle_event("stop", _params, socket) do
-    socket = assign(socket, :action_loading, :stop)
-    service = socket.assigns.service
-    unit = Quadlets.unit_name(service.name)
+    with_admin(socket, fn ->
+      socket = assign(socket, :action_loading, :stop)
+      service = socket.assigns.service
+      unit = Quadlets.unit_name(service.name)
 
-    case Systemd.stop(unit) do
-      :ok ->
-        Services.update_service_status(service, "stopped")
-        {:noreply,
-         socket
-         |> assign(:action_loading, nil)
-         |> assign(:service, Services.get_service_with_env!(service.id))
-         |> put_flash(:info, "Service stopped.")}
+      case Systemd.stop(unit) do
+        :ok ->
+          Services.update_service_status(service, "stopped")
+          {:noreply,
+           socket
+           |> assign(:action_loading, nil)
+           |> assign(:service, Services.get_service_with_env!(service.id))
+           |> put_flash(:info, "Service stopped.")}
 
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> assign(:action_loading, nil)
-         |> put_flash(:error, "Failed to stop: #{reason}")}
-    end
+        {:error, reason} ->
+          {:noreply,
+           socket
+           |> assign(:action_loading, nil)
+           |> put_flash(:error, "Failed to stop: #{reason}")}
+      end
+    end)
   end
 
   def handle_event("restart", _params, socket) do
-    socket = assign(socket, :action_loading, :restart)
-    service = socket.assigns.service
-    unit = Quadlets.unit_name(service.name)
+    with_admin(socket, fn ->
+      socket = assign(socket, :action_loading, :restart)
+      service = socket.assigns.service
+      unit = Quadlets.unit_name(service.name)
 
-    case Systemd.restart(unit) do
-      :ok ->
-        Services.update_service_status(service, "running")
-        {:noreply,
-         socket
-         |> assign(:action_loading, nil)
-         |> assign(:service, Services.get_service_with_env!(service.id))
-         |> put_flash(:info, "Service restarted.")}
+      case Systemd.restart(unit) do
+        :ok ->
+          Services.update_service_status(service, "running")
+          {:noreply,
+           socket
+           |> assign(:action_loading, nil)
+           |> assign(:service, Services.get_service_with_env!(service.id))
+           |> put_flash(:info, "Service restarted.")}
 
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> assign(:action_loading, nil)
-         |> put_flash(:error, "Failed to restart: #{reason}")}
-    end
+        {:error, reason} ->
+          {:noreply,
+           socket
+           |> assign(:action_loading, nil)
+           |> put_flash(:error, "Failed to restart: #{reason}")}
+      end
+    end)
   end
 
   def handle_event("deploy", _params, socket) do
-    socket = assign(socket, :action_loading, :deploy)
-    service = socket.assigns.service
-    user = socket.assigns.current_user
+    with_admin(socket, fn ->
+      socket = assign(socket, :action_loading, :deploy)
+      service = socket.assigns.service
+      user = socket.assigns.current_user
 
-    case Deployments.deploy_service(service.id, user.id) do
-      {:ok, deployment} ->
-        {:noreply,
-         socket
-         |> assign(:action_loading, nil)
-         |> assign(:deployments, Deployments.list_deployments_for_service(service.id))
-         |> put_flash(:info, "Deployment queued.")
-         |> push_navigate(to: ~p"/deployments/#{deployment.id}")}
+      case Deployments.deploy_service(service.id, user.id) do
+        {:ok, deployment} ->
+          {:noreply,
+           socket
+           |> assign(:action_loading, nil)
+           |> assign(:deployments, Deployments.list_deployments_for_service(service.id))
+           |> put_flash(:info, "Deployment queued.")
+           |> push_navigate(to: ~p"/deployments/#{deployment.id}")}
 
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> assign(:action_loading, nil)
-         |> put_flash(:error, "Failed to queue deploy: #{inspect(reason)}")}
-    end
+        {:error, reason} ->
+          {:noreply,
+           socket
+           |> assign(:action_loading, nil)
+           |> put_flash(:error, "Failed to queue deploy: #{inspect(reason)}")}
+      end
+    end)
   end
 
   # --- Edit config ---
@@ -136,44 +144,48 @@ defmodule QuadmanWeb.ServiceDetailLive do
   end
 
   def handle_event("save_config", %{"config" => params}, socket) do
-    service = socket.assigns.service
+    with_admin(socket, fn ->
+      service = socket.assigns.service
 
-    port_mappings = parse_lines(params["port_mappings"] || "")
-    volumes = parse_lines(params["volumes"] || "")
+      port_mappings = parse_lines(params["port_mappings"] || "")
+      volumes = parse_lines(params["volumes"] || "")
 
-    attrs = %{
-      image: String.trim(params["image"] || ""),
-      port_mappings: port_mappings,
-      volumes: volumes
-    }
+      attrs = %{
+        image: String.trim(params["image"] || ""),
+        port_mappings: port_mappings,
+        volumes: volumes
+      }
 
-    case Services.update_service(service, attrs) do
-      {:ok, updated} ->
-        {:noreply,
-         socket
-         |> assign(:service, Services.get_service_with_env!(updated.id))
-         |> assign(:show_edit, false)
-         |> assign(:edit_form, build_edit_form(updated))
-         |> put_flash(:info, "Configuration saved. Deploy to apply changes.")}
+      case Services.update_service(service, attrs) do
+        {:ok, updated} ->
+          {:noreply,
+           socket
+           |> assign(:service, Services.get_service_with_env!(updated.id))
+           |> assign(:show_edit, false)
+           |> assign(:edit_form, build_edit_form(updated))
+           |> put_flash(:info, "Configuration saved. Deploy to apply changes.")}
 
-      {:error, changeset} ->
-        errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, _} -> msg end)
-        {:noreply, put_flash(socket, :error, "Save failed: #{inspect(errors)}")}
-    end
+        {:error, changeset} ->
+          errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, _} -> msg end)
+          {:noreply, put_flash(socket, :error, "Save failed: #{inspect(errors)}")}
+      end
+    end)
   end
 
   # --- Auto-update toggle ---
 
   def handle_event("toggle_auto_update", _params, socket) do
-    service = socket.assigns.service
-    new_val = !service.auto_update
+    with_admin(socket, fn ->
+      service = socket.assigns.service
+      new_val = !service.auto_update
 
-    {:ok, updated} = Services.update_service(service, %{auto_update: new_val})
+      {:ok, updated} = Services.update_service(service, %{auto_update: new_val})
 
-    {:noreply,
-     socket
-     |> assign(:service, updated)
-     |> put_flash(:info, if(new_val, do: "Auto-update enabled.", else: "Auto-update disabled."))}
+      {:noreply,
+       socket
+       |> assign(:service, updated)
+       |> put_flash(:info, if(new_val, do: "Auto-update enabled.", else: "Auto-update disabled."))}
+    end)
   end
 
   # --- Delete service ---
@@ -187,29 +199,31 @@ defmodule QuadmanWeb.ServiceDetailLive do
   end
 
   def handle_event("delete_service", _params, socket) do
-    service = socket.assigns.service
+    with_admin(socket, fn ->
+      service = socket.assigns.service
 
-    # Stop and clean up the systemd unit + quadlet file
-    if service.unit_name do
-      Systemd.stop(service.unit_name)
-    end
+      # Stop and clean up the systemd unit + quadlet file
+      if service.unit_name do
+        Systemd.stop(service.unit_name)
+      end
 
-    if service.quadlet_path && File.exists?(service.quadlet_path) do
-      File.rm(service.quadlet_path)
-      Systemd.daemon_reload()
-    end
+      if service.quadlet_path && File.exists?(service.quadlet_path) do
+        File.rm(service.quadlet_path)
+        Systemd.daemon_reload()
+      end
 
-    # Remove Caddy route if set
-    if service.domain do
-      Caddy.remove_route(service.domain)
-    end
+      # Remove Caddy route if set
+      if service.domain do
+        Caddy.remove_route(service.domain)
+      end
 
-    Services.delete_service(service)
+      Services.delete_service(service)
 
-    {:noreply,
-     socket
-     |> put_flash(:info, "Service \"#{service.name}\" deleted.")
-     |> push_navigate(to: ~p"/services")}
+      {:noreply,
+       socket
+       |> put_flash(:info, "Service \"#{service.name}\" deleted.")
+       |> push_navigate(to: ~p"/services")}
+    end)
   end
 
   # --- Env var management ---
@@ -224,75 +238,88 @@ defmodule QuadmanWeb.ServiceDetailLive do
   end
 
   def handle_event("add_env", %{"environment_variable" => params}, socket) do
-    service = socket.assigns.service
+    with_admin(socket, fn ->
+      service = socket.assigns.service
 
-    attrs = Map.put(params, "service_id", service.id)
+      attrs = Map.put(params, "service_id", service.id)
 
-    case Services.create_env_var(attrs) do
-      {:ok, _} ->
-        updated = Services.get_service_with_env!(service.id)
+      case Services.create_env_var(attrs) do
+        {:ok, _} ->
+          updated = Services.get_service_with_env!(service.id)
 
-        {:noreply,
-         socket
-         |> assign(:env_vars, updated.environment_variables)
-         |> assign(:new_env_form, new_env_form())}
+          {:noreply,
+           socket
+           |> assign(:env_vars, updated.environment_variables)
+           |> assign(:new_env_form, new_env_form())}
 
-      {:error, changeset} ->
-        {:noreply, assign(socket, :new_env_form, to_form(changeset, as: :environment_variable))}
-    end
+        {:error, changeset} ->
+          {:noreply, assign(socket, :new_env_form, to_form(changeset, as: :environment_variable))}
+      end
+    end)
   end
 
   def handle_event("set_domain", %{"domain" => domain}, socket) do
-    service = socket.assigns.service
-    domain = domain |> String.trim() |> String.downcase()
-    domain = if domain == "", do: nil, else: domain
+    with_admin(socket, fn ->
+      service = socket.assigns.service
+      domain = domain |> String.trim() |> String.downcase()
+      domain = if domain == "", do: nil, else: domain
 
-    case Services.update_service(service, %{domain: domain}) do
-      {:ok, updated} ->
-        # If Caddy is enabled and service is running, sync the route
-        if updated.domain && updated.status == "running" do
-          upstream = Caddy.upstream_from_port_mappings(updated.port_mappings)
-          if upstream, do: Caddy.upsert_route(updated.domain, upstream)
-        end
+      case Services.update_service(service, %{domain: domain}) do
+        {:ok, updated} ->
+          # If Caddy is enabled and service is running, sync the route
+          if updated.domain && updated.status == "running" do
+            upstream = Caddy.upstream_from_port_mappings(updated.port_mappings)
+            if upstream, do: Caddy.upsert_route(updated.domain, upstream)
+          end
 
-        # If domain was removed and Caddy is enabled, remove the route
-        if is_nil(domain) && service.domain do
-          Caddy.remove_route(service.domain)
-        end
+          # If domain was removed and Caddy is enabled, remove the route
+          if is_nil(domain) && service.domain do
+            Caddy.remove_route(service.domain)
+          end
 
-        {:noreply,
-         socket
-         |> assign(:service, updated)
-         |> assign(:domain_form, to_form(%{"domain" => updated.domain || ""}))
-         |> put_flash(:info, if(domain, do: "Domain set to #{domain}.", else: "Domain removed."))}
+          {:noreply,
+           socket
+           |> assign(:service, updated)
+           |> assign(:domain_form, to_form(%{"domain" => updated.domain || ""}))
+           |> put_flash(:info, if(domain, do: "Domain set to #{domain}.", else: "Domain removed."))}
 
-      {:error, changeset} ->
-        errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, _} -> msg end)
-        {:noreply, put_flash(socket, :error, "Invalid domain: #{inspect(errors[:domain])}")}
-    end
+        {:error, changeset} ->
+          errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, _} -> msg end)
+          {:noreply, put_flash(socket, :error, "Invalid domain: #{inspect(errors[:domain])}")}
+      end
+    end)
   end
 
   def handle_event("remove_domain", _params, socket) do
-    service = socket.assigns.service
-    old_domain = service.domain
+    with_admin(socket, fn ->
+      service = socket.assigns.service
+      old_domain = service.domain
 
-    {:ok, updated} = Services.update_service(service, %{domain: nil})
+      {:ok, updated} = Services.update_service(service, %{domain: nil})
 
-    if old_domain, do: Caddy.remove_route(old_domain)
+      if old_domain, do: Caddy.remove_route(old_domain)
 
-    {:noreply,
-     socket
-     |> assign(:service, updated)
-     |> assign(:domain_form, to_form(%{"domain" => ""}))
-     |> put_flash(:info, "Domain removed.")}
+      {:noreply,
+       socket
+       |> assign(:service, updated)
+       |> assign(:domain_form, to_form(%{"domain" => ""}))
+       |> put_flash(:info, "Domain removed.")}
+    end)
   end
 
   def handle_event("delete_env", %{"id" => id}, socket) do
-    env_var = Services.get_env_var!(id)
-    Services.delete_env_var(env_var)
+    with_admin(socket, fn ->
+      service = socket.assigns.service
+      env_var = Services.get_env_var!(id)
 
-    updated = Services.get_service_with_env!(socket.assigns.service.id)
-    {:noreply, assign(socket, :env_vars, updated.environment_variables)}
+      if env_var.service_id != service.id do
+        {:noreply, put_flash(socket, :error, "Not found.")}
+      else
+        Services.delete_env_var(env_var)
+        updated = Services.get_service_with_env!(service.id)
+        {:noreply, assign(socket, :env_vars, updated.environment_variables)}
+      end
+    end)
   end
 
   @impl true
@@ -320,6 +347,14 @@ defmodule QuadmanWeb.ServiceDetailLive do
       end
     else
       {:noreply, socket}
+    end
+  end
+
+  defp with_admin(socket, fun) do
+    if socket.assigns.current_user.role == "admin" do
+      fun.()
+    else
+      {:noreply, put_flash(socket, :error, "Admin access required.")}
     end
   end
 

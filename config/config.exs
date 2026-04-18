@@ -20,7 +20,7 @@ config :quadman, QuadmanWeb.Endpoint,
     layout: false
   ],
   pubsub_server: Quadman.PubSub,
-  live_view: [signing_salt: "KQSC1jqs"]
+  live_view: [signing_salt: "sUKsrpiSJpc"]
 
 # Configure esbuild (the version is required)
 config :esbuild,

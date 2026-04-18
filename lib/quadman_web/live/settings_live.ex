@@ -66,16 +66,20 @@ defmodule QuadmanWeb.SettingsLive do
   # ---------------------------------------------------------------------------
 
   def handle_event("check_updates", _params, socket) do
-    socket = assign(socket, :update_state, :checking)
-    send(self(), :do_check_updates)
-    {:noreply, socket}
+    with_admin(socket, fn ->
+      socket = assign(socket, :update_state, :checking)
+      send(self(), :do_check_updates)
+      {:noreply, socket}
+    end)
   end
 
   def handle_event("perform_update", _params, socket) do
-    %{tarball_url: url} = socket.assigns.latest_release
-    socket = assign(socket, :update_state, :updating)
-    Task.start(fn -> Updater.download_and_apply(url) end)
-    {:noreply, socket}
+    with_admin(socket, fn ->
+      %{tarball_url: url, sha256_url: sha256_url} = socket.assigns.latest_release
+      socket = assign(socket, :update_state, :updating)
+      Task.start(fn -> Updater.download_and_apply(url, sha256_url) end)
+      {:noreply, socket}
+    end)
   end
 
   @impl true
@@ -111,9 +115,11 @@ defmodule QuadmanWeb.SettingsLive do
   # ---------------------------------------------------------------------------
 
   def handle_event("toggle_registrations", _params, socket) do
-    new_val = if socket.assigns.registrations_enabled, do: "false", else: "true"
-    AppSettings.put("registrations_enabled", new_val)
-    {:noreply, assign(socket, :registrations_enabled, new_val == "true")}
+    with_admin(socket, fn ->
+      new_val = if socket.assigns.registrations_enabled, do: "false", else: "true"
+      AppSettings.put("registrations_enabled", new_val)
+      {:noreply, assign(socket, :registrations_enabled, new_val == "true")}
+    end)
   end
 
   # ---------------------------------------------------------------------------
@@ -121,45 +127,53 @@ defmodule QuadmanWeb.SettingsLive do
   # ---------------------------------------------------------------------------
 
   def handle_event("deploy_caddy", _params, socket) do
-    case CaddyContainer.deploy() do
-      :ok ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "Caddy container deployed.")
-         |> load_caddy_status()}
+    with_admin(socket, fn ->
+      case CaddyContainer.deploy() do
+        :ok ->
+          {:noreply,
+           socket
+           |> put_flash(:info, "Caddy container deployed.")
+           |> load_caddy_status()}
 
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Deploy failed: #{inspect(reason)}")}
-    end
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, "Deploy failed: #{inspect(reason)}")}
+      end
+    end)
   end
 
   def handle_event("redeploy_caddy", _params, socket) do
-    case CaddyContainer.redeploy() do
-      :ok ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "Caddy redeployed.")
-         |> load_caddy_status()}
+    with_admin(socket, fn ->
+      case CaddyContainer.redeploy() do
+        :ok ->
+          {:noreply,
+           socket
+           |> put_flash(:info, "Caddy redeployed.")
+           |> load_caddy_status()}
 
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Redeploy failed: #{inspect(reason)}")}
-    end
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, "Redeploy failed: #{inspect(reason)}")}
+      end
+    end)
   end
 
   def handle_event("undeploy_caddy", _params, socket) do
-    CaddyContainer.undeploy()
+    with_admin(socket, fn ->
+      CaddyContainer.undeploy()
 
-    {:noreply,
-     socket
-     |> put_flash(:info, "Caddy container removed.")
-     |> load_caddy_status()}
+      {:noreply,
+       socket
+       |> put_flash(:info, "Caddy container removed.")
+       |> load_caddy_status()}
+    end)
   end
 
   def handle_event("restart_caddy", _params, socket) do
-    case CaddyContainer.restart() do
-      :ok -> {:noreply, socket |> put_flash(:info, "Caddy restarted.") |> load_caddy_status()}
-      {:error, reason} -> {:noreply, put_flash(socket, :error, "Restart failed: #{inspect(reason)}")}
-    end
+    with_admin(socket, fn ->
+      case CaddyContainer.restart() do
+        :ok -> {:noreply, socket |> put_flash(:info, "Caddy restarted.") |> load_caddy_status()}
+        {:error, reason} -> {:noreply, put_flash(socket, :error, "Restart failed: #{inspect(reason)}")}
+      end
+    end)
   end
 
   def handle_event("check_caddy", _params, socket) do
@@ -167,14 +181,16 @@ defmodule QuadmanWeb.SettingsLive do
   end
 
   def handle_event("set_caddy_tag", %{"tag" => tag}, socket) do
-    tag = String.trim(tag)
+    with_admin(socket, fn ->
+      tag = String.trim(tag)
 
-    if tag != "" do
-      AppSettings.put("caddy_image_tag", tag)
-      {:noreply, assign(socket, :caddy_tag, tag) |> assign(:caddy_tag_input, tag)}
-    else
-      {:noreply, socket}
-    end
+      if tag != "" do
+        AppSettings.put("caddy_image_tag", tag)
+        {:noreply, assign(socket, :caddy_tag, tag) |> assign(:caddy_tag_input, tag)}
+      else
+        {:noreply, socket}
+      end
+    end)
   end
 
   def handle_event("caddy_tag_input", %{"value" => val}, socket) do
@@ -186,15 +202,15 @@ defmodule QuadmanWeb.SettingsLive do
   # ---------------------------------------------------------------------------
 
   def handle_event("start_caddy_logs", _params, socket) do
-    {:noreply, start_caddy_log_stream(socket)}
+    with_admin(socket, fn -> {:noreply, start_caddy_log_stream(socket)} end)
   end
 
   def handle_event("stop_caddy_logs", _params, socket) do
-    {:noreply, stop_caddy_log_stream(socket)}
+    with_admin(socket, fn -> {:noreply, stop_caddy_log_stream(socket)} end)
   end
 
   def handle_event("clear_caddy_logs", _params, socket) do
-    {:noreply, assign(socket, :caddy_log_lines, [])}
+    with_admin(socket, fn -> {:noreply, assign(socket, :caddy_log_lines, [])} end)
   end
 
   @impl true
@@ -274,6 +290,14 @@ defmodule QuadmanWeb.SettingsLive do
     case String.split(buffer, "\n") do
       [single] -> {[], single}
       parts -> {Enum.drop(parts, -1), List.last(parts)}
+    end
+  end
+
+  defp with_admin(socket, fun) do
+    if socket.assigns.current_user.role == "admin" do
+      fun.()
+    else
+      {:noreply, put_flash(socket, :error, "Admin access required.")}
     end
   end
 

@@ -74,6 +74,10 @@ defmodule QuadmanWeb.AuthController do
   end
 
   def logout(conn, _params) do
+    if token = get_session(conn, :user_token) do
+      Accounts.revoke_token(token)
+    end
+
     conn
     |> delete_session(:user_token)
     |> redirect(to: ~p"/login")

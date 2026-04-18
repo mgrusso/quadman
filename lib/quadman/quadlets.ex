@@ -17,11 +17,24 @@ defmodule Quadman.Quadlets do
     secret_env = Enum.filter(env_vars, & &1.is_secret)
     secret_file = secret_env_path(service.name)
 
+    # Pre-sanitize all user-supplied values to prevent newline injection into the unit file
+    safe_service = %{
+      service
+      | image: sanitize(service.image),
+        port_mappings: Enum.map(service.port_mappings, &sanitize/1),
+        volumes: Enum.map(service.volumes, &sanitize/1),
+        resource_cpu: sanitize(service.resource_cpu),
+        resource_mem: sanitize(service.resource_mem)
+    }
+
+    safe_public_env =
+      Enum.map(public_env, fn e -> %{e | key: sanitize(e.key), value: sanitize(e.value)} end)
+
     EEx.eval_string(
       container_template(),
       assigns: [
-        service: service,
-        public_env: public_env,
+        service: safe_service,
+        public_env: safe_public_env,
         has_secrets: secret_env != [],
         secret_file: secret_file,
         stack_name: stack_name
@@ -57,7 +70,11 @@ defmodule Quadman.Quadlets do
     else
       path = secret_env_path(service.name)
       dir = secret_dir()
-      content = Enum.map_join(secret_env, "\n", fn e -> "#{e.key}=#{e.value}" end) <> "\n"
+      content =
+        Enum.map_join(secret_env, "\n", fn e ->
+          safe_value = String.replace(e.value, ~r/[\r\n]/, "")
+          "#{e.key}=#{safe_value}"
+        end) <> "\n"
 
       with :ok <- File.mkdir_p(dir),
            :ok <- File.write(path, content),
@@ -86,6 +103,9 @@ defmodule Quadman.Quadlets do
   # ---------------------------------------------------------------------------
   # Template
   # ---------------------------------------------------------------------------
+
+  defp sanitize(value) when is_binary(value), do: String.replace(value, ~r/[\r\n]/, "")
+  defp sanitize(nil), do: nil
 
   defp container_template do
     """
