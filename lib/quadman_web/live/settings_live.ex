@@ -250,26 +250,74 @@ defmodule QuadmanWeb.SettingsLive do
         put_flash(socket, :error, "podman not found")
 
       exe ->
-        args = ["logs", "--follow", "--names", "--tail", "200", "systemd-caddy"]
-        port_opts = [:binary, :stderr_to_stdout, :exit_status, args: args, cd: "/opt/quadman"]
+        container_name = "systemd-caddy"
 
-        port =
-          try do
-            Port.open({:spawn_executable, exe}, port_opts)
-          rescue
-            _ -> nil
-          end
+        {_, code} =
+          System.cmd(exe, ["inspect", "--type", "container", container_name],
+            stderr_to_stdout: true,
+            env: caddy_podman_env())
 
-        if is_port(port) do
-          socket
-          |> assign(:caddy_log_port, port)
-          |> assign(:caddy_log_streaming, true)
-          |> assign(:caddy_log_buffer, "")
+        if code == 0 do
+          args = ["logs", "--follow", "--names", "--tail", "200", container_name]
+          open_caddy_log_port(socket, exe, args)
         else
-          put_flash(socket, :error, "Could not open Caddy log stream.")
+          open_caddy_journalctl_stream(socket)
         end
     end
   end
+
+  defp open_caddy_log_port(socket, exe, args) do
+    port_opts = [:binary, :stderr_to_stdout, :exit_status, args: args, cd: "/opt/quadman"]
+
+    port =
+      try do
+        Port.open({:spawn_executable, exe}, port_opts)
+      rescue
+        _ -> nil
+      end
+
+    if is_port(port) do
+      socket
+      |> assign(:caddy_log_port, port)
+      |> assign(:caddy_log_streaming, true)
+      |> assign(:caddy_log_buffer, "")
+    else
+      put_flash(socket, :error, "Could not open Caddy log stream.")
+    end
+  end
+
+  defp open_caddy_journalctl_stream(socket) do
+    exe = System.find_executable("journalctl") || "/usr/bin/journalctl"
+    {uid, _} = System.cmd("id", ["-u"])
+    uid = String.trim(uid)
+    dbus = "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/#{uid}/bus"
+    args = ["--user-unit", "caddy.service", "--no-pager", "--follow", "--output", "short"]
+    shell_cmd = "#{dbus} #{exe} #{Enum.map_join(args, " ", &shell_escape/1)}"
+
+    port =
+      try do
+        Port.open({:spawn_executable, "/bin/sh"},
+          [:binary, :stderr_to_stdout, :exit_status, args: ["-c", shell_cmd], cd: "/opt/quadman"])
+      rescue
+        _ -> nil
+      end
+
+    if is_port(port) do
+      socket
+      |> assign(:caddy_log_port, port)
+      |> assign(:caddy_log_streaming, true)
+      |> assign(:caddy_log_buffer, "")
+    else
+      put_flash(socket, :error, "No Caddy logs available.")
+    end
+  end
+
+  defp caddy_podman_env do
+    {uid, _} = System.cmd("id", ["-u"])
+    [{"HOME", "/opt/quadman"}, {"XDG_RUNTIME_DIR", "/run/user/#{String.trim(uid)}"}]
+  end
+
+  defp shell_escape(s), do: "'#{String.replace(s, "'", "'\\''")}'"
 
   defp stop_caddy_log_stream(%{assigns: %{caddy_log_port: nil}} = socket), do: socket
 
