@@ -114,7 +114,9 @@ defmodule Quadman.Caddy.Real do
         end
         :ok
 
-      {:ok, %{status: 404}} ->
+      {:ok, %{status: s}} when s in [400, 404] ->
+        # 404 = parent exists, server key absent; 400 = parent path itself absent.
+        # Both mean the server hasn't been created yet — bootstrap it.
         Logger.info("Caddy: bootstrapping server #{@server_name}")
         server = %{"listen" => [":443"], "tls_connection_policies" => [%{}], "routes" => []}
         bootstrap_server(server)
