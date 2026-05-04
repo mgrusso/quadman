@@ -13,7 +13,7 @@ defmodule Quadman.CaddyContainer do
   Caddyfile so it survives Caddy restarts without DB access.
   """
 
-  alias Quadman.Systemd
+  alias Quadman.{Systemd, Podman, Caddy}
   require Logger
 
   @unit_name "caddy.service"
@@ -95,6 +95,83 @@ defmodule Quadman.CaddyContainer do
   @doc "The image tag currently configured (from AppSettings or default)."
   def caddy_tag do
     Quadman.AppSettings.get("caddy_image_tag", "2")
+  end
+
+  @doc """
+  Checks whether a newer image is available for the current Caddy tag.
+  Pulls the latest image and compares digests before and after.
+  Returns `{:ok, :up_to_date}`, `{:ok, {:update_available, new_digest}}`, or `{:error, reason}`.
+  """
+  def check_for_image_update do
+    image = "docker.io/library/caddy:#{caddy_tag()}"
+
+    before_digest =
+      case Podman.image_digest(image) do
+        {:ok, d} -> d
+        _ -> nil
+      end
+
+    case Podman.pull_image(image) do
+      :ok ->
+        case Podman.image_digest(image) do
+          {:ok, ^before_digest} -> {:ok, :up_to_date}
+          {:ok, new_digest} -> {:ok, {:update_available, new_digest}}
+          {:error, _} = err -> err
+        end
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  @doc """
+  Pulls the latest Caddy image, restarts the container, and re-registers all routes.
+  Handles the full upgrade cycle including route restoration after restart.
+  """
+  def upgrade_image do
+    if not deployed?() do
+      {:error, "Caddy is not deployed"}
+    else
+      image = "docker.io/library/caddy:#{caddy_tag()}"
+
+      with :ok <- Podman.pull_image(image),
+           :ok <- Systemd.restart(@unit_name) do
+        Process.sleep(3_000)
+        sync_routes()
+        {:ok, image}
+      end
+    end
+  end
+
+  @doc """
+  Re-registers the Quadman UI route and all running service routes with Caddy.
+  Call after any Caddy restart to restore routes that live only in memory.
+  """
+  def sync_routes do
+    phx_host = Application.get_env(:quadman, :phx_host, System.get_env("PHX_HOST"))
+    phx_port = Application.get_env(:quadman, :phx_port, 4000)
+
+    if phx_host && phx_host != "localhost" do
+      case Caddy.upsert_route(phx_host, "127.0.0.1:#{phx_port}") do
+        :ok -> Logger.info("Caddy: registered Quadman UI route #{phx_host}")
+        {:error, r} -> Logger.warning("Caddy: failed to register UI route: #{inspect(r)}")
+      end
+    end
+
+    Quadman.Services.list_services()
+    |> Enum.filter(&(&1.domain && &1.status == "running"))
+    |> Enum.each(fn svc ->
+      upstream = Caddy.upstream_from_port_mappings(svc.port_mappings)
+
+      if upstream do
+        case Caddy.upsert_route(svc.domain, upstream) do
+          :ok -> Logger.info("Caddy: re-registered route #{svc.domain} → #{upstream}")
+          {:error, r} -> Logger.warning("Caddy: failed to re-register #{svc.domain}: #{inspect(r)}")
+        end
+      end
+    end)
+
+    :ok
   end
 
   # ---------------------------------------------------------------------------

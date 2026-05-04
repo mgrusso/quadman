@@ -68,30 +68,6 @@ defmodule Quadman.Application do
   end
 
   defp register_caddy_routes do
-    require Logger
-
-    # Register the Quadman UI itself — Caddyfile no longer does this
-    phx_host = Application.get_env(:quadman, :phx_host, System.get_env("PHX_HOST"))
-    phx_port = Application.get_env(:quadman, :phx_port, 4000)
-
-    if phx_host && phx_host != "localhost" do
-      case Quadman.Caddy.upsert_route(phx_host, "127.0.0.1:#{phx_port}") do
-        :ok -> Logger.info("Caddy: registered Quadman UI route #{phx_host}")
-        {:error, r} -> Logger.warning("Caddy: failed to register UI route: #{inspect(r)}")
-      end
-    end
-
-    # Re-register all running service routes (in case Caddy was restarted)
-    Quadman.Services.list_services()
-    |> Enum.filter(&(&1.domain && &1.status == "running"))
-    |> Enum.each(fn svc ->
-      upstream = Quadman.Caddy.upstream_from_port_mappings(svc.port_mappings)
-      if upstream do
-        case Quadman.Caddy.upsert_route(svc.domain, upstream) do
-          :ok -> Logger.info("Caddy: re-registered route #{svc.domain} → #{upstream}")
-          {:error, r} -> Logger.warning("Caddy: failed to re-register #{svc.domain}: #{inspect(r)}")
-        end
-      end
-    end)
+    Quadman.CaddyContainer.sync_routes()
   end
 end

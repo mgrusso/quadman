@@ -59,6 +59,25 @@ defmodule Quadman.Deployments do
     |> Repo.all()
   end
 
+  @doc "Deletes deployments for a service beyond the most recent `keep` records (cascade-deletes their logs)."
+  def trim_old_deployments(service_id, keep \\ 3) do
+    ids_to_keep =
+      Deployment
+      |> where([d], d.service_id == ^service_id)
+      |> order_by([d], desc: d.inserted_at)
+      |> limit(^keep)
+      |> select([d], d.id)
+      |> Repo.all()
+
+    if ids_to_keep != [] do
+      Deployment
+      |> where([d], d.service_id == ^service_id and d.id not in ^ids_to_keep)
+      |> Repo.delete_all()
+    end
+
+    :ok
+  end
+
   @doc """
   Creates a deployment record and enqueues the Oban deploy job.
   Returns `{:ok, deployment}` or `{:error, reason}`.

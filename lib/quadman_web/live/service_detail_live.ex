@@ -25,7 +25,7 @@ defmodule QuadmanWeb.ServiceDetailLive do
      socket
      |> assign(:page_title, service.name)
      |> assign(:service, service)
-     |> assign(:deployments, Deployments.list_deployments_for_service(id))
+     |> assign(:deployments, Deployments.list_deployments_for_service(id, 3))
      |> assign(:env_vars, service.environment_variables)
      |> assign(:new_env_form, new_env_form())
      |> assign(:domain_form, to_form(%{"domain" => service.domain || ""}))
@@ -404,7 +404,7 @@ defmodule QuadmanWeb.ServiceDetailLive do
             href={~p"/services/#{@service.id}/logs"}
             class="text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-600 px-3 py-1.5 rounded-lg transition-colors"
           >
-            Logs
+            Container Logs
           </.link>
 
           <button
@@ -655,20 +655,29 @@ defmodule QuadmanWeb.ServiceDetailLive do
         </div>
       </div>
 
-      <%!-- Recent deployments --%>
+      <%!-- Deployment history --%>
       <div class="bg-gray-900 border border-gray-800 rounded-xl">
-        <div class="px-5 py-4 border-b border-gray-800">
-          <h2 class="font-semibold text-white">Recent Deployments</h2>
+        <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+          <h2 class="font-semibold text-white">Deployment History</h2>
+          <span class="text-xs text-gray-600">last 3</span>
         </div>
         <div class="divide-y divide-gray-800">
           <%= for d <- @deployments do %>
             <div class="flex items-center justify-between px-5 py-3">
-              <div class="flex items-center gap-3">
+              <div class="flex items-center gap-3 min-w-0">
                 <.status_badge status={d.status} />
-                <span class="text-xs font-mono text-gray-500"><%= d.image_digest && String.slice(d.image_digest, 0..15) || "—" %></span>
+                <span class="text-xs text-gray-500 flex-shrink-0">
+                  <%= Calendar.strftime(d.inserted_at, "%b %-d %H:%M") %>
+                </span>
+                <span class="text-xs font-mono text-gray-600 truncate">
+                  <%= d.image_digest && String.slice(d.image_digest, 0..15) || "—" %>
+                </span>
               </div>
-              <.link href={~p"/deployments/#{d.id}"} class="text-xs text-indigo-400 hover:text-indigo-300">
-                View logs &rarr;
+              <.link
+                href={~p"/deployments/#{d.id}"}
+                class="text-xs text-indigo-400 hover:text-indigo-300 border border-indigo-900 hover:border-indigo-700 px-2.5 py-1 rounded-lg transition-colors flex-shrink-0 ml-3"
+              >
+                Deployment Logs
               </.link>
             </div>
           <% end %>

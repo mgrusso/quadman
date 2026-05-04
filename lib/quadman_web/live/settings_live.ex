@@ -27,6 +27,7 @@ defmodule QuadmanWeb.SettingsLive do
      |> assign(:caddy_log_buffer, "")
      |> assign(:caddy_log_port, nil)
      |> assign(:caddy_log_streaming, false)
+     |> assign(:caddy_image_state, :idle)
      |> load_caddy_status()}
   end
 
@@ -180,6 +181,28 @@ defmodule QuadmanWeb.SettingsLive do
     {:noreply, load_caddy_status(socket)}
   end
 
+  def handle_event("check_caddy_image", _params, socket) do
+    with_admin(socket, fn ->
+      pid = self()
+      Task.start(fn ->
+        result = CaddyContainer.check_for_image_update()
+        send(pid, {:caddy_image_checked, result})
+      end)
+      {:noreply, assign(socket, :caddy_image_state, :checking)}
+    end)
+  end
+
+  def handle_event("upgrade_caddy_image", _params, socket) do
+    with_admin(socket, fn ->
+      pid = self()
+      Task.start(fn ->
+        result = CaddyContainer.upgrade_image()
+        send(pid, {:caddy_image_upgraded, result})
+      end)
+      {:noreply, assign(socket, :caddy_image_state, :upgrading)}
+    end)
+  end
+
   def handle_event("set_caddy_tag", %{"tag" => tag}, socket) do
     with_admin(socket, fn ->
       tag = String.trim(tag)
@@ -228,6 +251,26 @@ defmodule QuadmanWeb.SettingsLive do
      |> assign(:caddy_log_port, nil)
      |> assign(:caddy_log_streaming, false)
      |> assign(:caddy_log_buffer, "")}
+  end
+
+  def handle_info({:caddy_image_checked, {:ok, :up_to_date}}, socket) do
+    {:noreply, assign(socket, :caddy_image_state, :up_to_date)}
+  end
+
+  def handle_info({:caddy_image_checked, {:ok, {:update_available, digest}}}, socket) do
+    {:noreply, assign(socket, :caddy_image_state, {:update_available, digest})}
+  end
+
+  def handle_info({:caddy_image_checked, {:error, reason}}, socket) do
+    {:noreply, assign(socket, :caddy_image_state, {:error, inspect(reason)})}
+  end
+
+  def handle_info({:caddy_image_upgraded, {:ok, _image}}, socket) do
+    {:noreply, socket |> assign(:caddy_image_state, :up_to_date) |> load_caddy_status()}
+  end
+
+  def handle_info({:caddy_image_upgraded, {:error, reason}}, socket) do
+    {:noreply, socket |> assign(:caddy_image_state, {:error, inspect(reason)}) |> load_caddy_status()}
   end
 
   def handle_info(_, socket), do: {:noreply, socket}
@@ -584,6 +627,39 @@ defmodule QuadmanWeb.SettingsLive do
               </button>
               <span class="text-xs text-gray-600">e.g. <span class="font-mono">2</span>, <span class="font-mono">2.9</span>, <span class="font-mono">alpine</span></span>
             </form>
+          </div>
+
+          <%!-- Image update check --%>
+          <div class="flex items-center gap-3 border-t border-gray-800 pt-4 flex-wrap">
+            <div class="text-xs text-gray-500 uppercase tracking-wide flex-shrink-0">Image update</div>
+            <%= case @caddy_image_state do %>
+              <% :idle -> %>
+                <button
+                  phx-click="check_caddy_image"
+                  class="text-xs border border-gray-700 text-gray-300 hover:border-indigo-500 hover:text-indigo-400 rounded-lg px-3 py-1.5 transition-colors"
+                >
+                  Check for update
+                </button>
+              <% :checking -> %>
+                <span class="text-xs text-gray-500 animate-pulse">Checking…</span>
+              <% :up_to_date -> %>
+                <span class="text-xs text-emerald-400">✓ Up to date</span>
+                <button phx-click="check_caddy_image" class="text-xs text-gray-500 hover:text-gray-300 transition-colors">Re-check</button>
+              <% {:update_available, new_digest} -> %>
+                <span class="text-xs text-yellow-400">Update available</span>
+                <span class="text-xs font-mono text-gray-500"><%= String.slice(new_digest || "", 0..23) %></span>
+                <button
+                  phx-click="upgrade_caddy_image"
+                  class="text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg px-3 py-1.5 transition-colors"
+                >
+                  Upgrade Caddy
+                </button>
+              <% :upgrading -> %>
+                <span class="text-xs text-gray-500 animate-pulse">Pulling image, restarting, syncing routes…</span>
+              <% {:error, reason} -> %>
+                <span class="text-xs text-red-400"><%= reason %></span>
+                <button phx-click="check_caddy_image" class="text-xs text-gray-500 hover:text-gray-300 transition-colors">Retry</button>
+            <% end %>
           </div>
 
           <%!-- Container controls --%>

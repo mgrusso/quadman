@@ -47,6 +47,7 @@ defmodule Quadman.Workers.DeployWorker do
       Deployments.update_deployment_status(deployment, "succeeded", image_digest: digest)
       broadcast_status(deployment_id, "succeeded")
       Services.update_service_status(service, "running")
+      Deployments.trim_old_deployments(service.id)
       log.("Deploy succeeded", "info")
       :ok
     else
@@ -55,6 +56,7 @@ defmodule Quadman.Workers.DeployWorker do
         broadcast_status(deployment_id, "failed")
         Services.update_service_status(service, "failed")
         step_collect_container_logs(service, log)
+        Deployments.trim_old_deployments(service.id)
         log.("Deploy failed: #{reason}", "error")
         {:error, reason}
     end
