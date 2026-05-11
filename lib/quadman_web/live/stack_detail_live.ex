@@ -73,7 +73,7 @@ defmodule QuadmanWeb.StackDetailLive do
   def handle_event("delete_stack", _params, socket) do
     with_admin(socket, fn ->
       stack = socket.assigns.stack
-      {:ok, _} = Stacks.delete_stack(stack)
+      {:ok, _} = Stacks.delete_stack_with_services(stack)
 
       {:noreply,
        socket

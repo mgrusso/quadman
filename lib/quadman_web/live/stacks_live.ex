@@ -123,7 +123,7 @@ defmodule QuadmanWeb.StacksLive do
 
   def handle_event("delete", %{"id" => id}, socket) do
     stack = Stacks.get_stack!(id)
-    {:ok, _} = Stacks.delete_stack(stack)
+    {:ok, _} = Stacks.delete_stack_with_services(stack)
 
     {:noreply,
      socket

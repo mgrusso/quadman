@@ -40,6 +40,34 @@ defmodule Quadman.Stacks do
 
   def delete_stack(%Stack{} = stack), do: Repo.delete(stack)
 
+  def delete_stack_with_services(%Stack{} = stack) do
+    services =
+      Service
+      |> where([s], s.stack_id == ^stack.id)
+      |> Repo.all()
+
+    needs_reload =
+      Enum.reduce(services, false, fn service, reload ->
+        if service.unit_name, do: Systemd.stop(service.unit_name)
+
+        if service.quadlet_path && File.exists?(service.quadlet_path) do
+          File.rm(service.quadlet_path)
+          true
+        else
+          reload
+        end
+      end)
+
+    Enum.each(services, fn service ->
+      if service.domain, do: Caddy.remove_route(service.domain)
+      Services.delete_service(service)
+    end)
+
+    if needs_reload, do: Systemd.daemon_reload()
+
+    Repo.delete(stack)
+  end
+
   def change_stack(%Stack{} = stack, attrs \\ %{}) do
     Stack.changeset(stack, attrs)
   end
