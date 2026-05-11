@@ -672,6 +672,11 @@ defmodule QuadmanWeb.ServiceDetailLive do
                 <span class="text-xs font-mono text-gray-600 truncate">
                   <%= d.image_digest && String.slice(d.image_digest, 0..15) || "—" %>
                 </span>
+                <%= if d.triggered_by do %>
+                  <span class="text-xs text-gray-600 truncate"><%= d.triggered_by.email %></span>
+                <% else %>
+                  <span class="text-xs text-sky-800 flex-shrink-0">auto-update</span>
+                <% end %>
               </div>
               <.link
                 href={~p"/deployments/#{d.id}"}
