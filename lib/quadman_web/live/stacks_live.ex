@@ -69,7 +69,9 @@ defmodule QuadmanWeb.StacksLive do
      |> push_patch(to: ~p"/stacks")}
   end
 
-  def handle_event("compose_yaml_change", %{"yaml" => yaml, "name" => name}, socket) do
+  def handle_event("compose_yaml_change", %{"yaml" => yaml} = params, socket) do
+    name = Map.get(params, "name", socket.assigns.compose_name)
+
     name =
       if name == "" do
         case Compose.extract_name(yaml) do
