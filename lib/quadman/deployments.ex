@@ -17,6 +17,7 @@ defmodule Quadman.Deployments do
     |> where([d], d.service_id == ^service_id)
     |> order_by([d], desc: d.inserted_at)
     |> limit(^limit)
+    |> preload([:triggered_by])
     |> Repo.all()
   end
 
