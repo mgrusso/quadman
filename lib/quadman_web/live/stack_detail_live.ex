@@ -1,7 +1,7 @@
 defmodule QuadmanWeb.StackDetailLive do
   use QuadmanWeb, :live_view
 
-  alias Quadman.{Stacks, Services, Deployments}
+  alias Quadman.{Stacks, Services, Deployments, Compose}
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
@@ -16,7 +16,11 @@ defmodule QuadmanWeb.StackDetailLive do
      |> assign(:stack, stack)
      |> assign(:all_services, all_services)
      |> assign(:unassigned_services, unassigned(all_services, stack))
-     |> assign(:confirm_delete_stack, false)}
+     |> assign(:confirm_delete_stack, false)
+     |> assign(:compose_yaml_input, stack.compose_yaml || "")
+     |> assign(:compose_error, nil)
+     |> assign(:compose_warnings, [])
+     |> assign(:compose_saving, false)}
   end
 
   @impl true
@@ -90,6 +94,50 @@ defmodule QuadmanWeb.StackDetailLive do
        socket
        |> assign(:stack, stack)
        |> assign(:unassigned_services, unassigned(all_services, stack))}
+    end)
+  end
+
+  def handle_event("compose_yaml_input", %{"yaml" => yaml}, socket) do
+    {error, warnings} =
+      case Compose.parse(yaml) do
+        {:ok, _, warns} -> {nil, warns}
+        {:error, reason} when yaml != "" -> {reason, []}
+        _ -> {nil, []}
+      end
+
+    {:noreply,
+     socket
+     |> assign(:compose_yaml_input, yaml)
+     |> assign(:compose_error, error)
+     |> assign(:compose_warnings, warnings)}
+  end
+
+  def handle_event("save_compose", %{"yaml" => yaml}, socket) do
+    with_admin(socket, fn ->
+      socket = assign(socket, :compose_saving, true)
+
+      case Stacks.update_compose_yaml(socket.assigns.stack, yaml, socket.assigns.current_user.id) do
+        {:ok, %{created: c, updated: u, removed: r}, warnings} ->
+          stack = Stacks.get_stack_with_services!(socket.assigns.stack.id)
+          msg = "Saved & redeployed — #{c} created, #{u} updated, #{r} removed."
+
+          socket =
+            socket
+            |> assign(:stack, stack)
+            |> assign(:compose_yaml_input, yaml)
+            |> assign(:compose_saving, false)
+            |> assign(:compose_warnings, warnings)
+            |> assign(:compose_error, nil)
+            |> put_flash(:info, msg)
+
+          {:noreply, socket}
+
+        {:error, reason} ->
+          {:noreply,
+           socket
+           |> assign(:compose_saving, false)
+           |> assign(:compose_error, reason)}
+      end
     end)
   end
 
@@ -190,6 +238,55 @@ defmodule QuadmanWeb.StackDetailLive do
           <% end %>
         </div>
       </div>
+
+      <%!-- Compose YAML editor (only for compose-backed stacks) --%>
+      <%= if @stack.compose_yaml do %>
+        <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-6">
+          <div class="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <h2 class="font-semibold text-white">Compose YAML</h2>
+              <span class="text-xs text-emerald-700 bg-emerald-950 border border-emerald-900 px-2 py-0.5 rounded">compose</span>
+            </div>
+            <p class="text-xs text-gray-500">Edit and save to reconcile services and redeploy changed ones.</p>
+          </div>
+          <div class="p-5">
+            <form phx-submit="save_compose">
+              <textarea
+                name="yaml"
+                rows="20"
+                phx-change="compose_yaml_input"
+                phx-debounce="400"
+                class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-indigo-500 resize-y mb-3"
+              ><%= @compose_yaml_input %></textarea>
+
+              <%= if @compose_error do %>
+                <div class="bg-red-950 border border-red-800 rounded-lg px-4 py-3 text-sm text-red-300 mb-3">
+                  <span class="font-medium">Error:</span> <%= @compose_error %>
+                </div>
+              <% end %>
+
+              <%= if @compose_warnings != [] do %>
+                <div class="bg-yellow-950 border border-yellow-800 rounded-lg px-4 py-3 text-sm text-yellow-300 mb-3 space-y-1">
+                  <p class="font-medium">Warnings:</p>
+                  <%= for w <- @compose_warnings do %>
+                    <p class="text-xs">• <%= w %></p>
+                  <% end %>
+                </div>
+              <% end %>
+
+              <div class="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={@compose_saving or @compose_error != nil}
+                  class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors"
+                >
+                  <%= if @compose_saving, do: "Saving…", else: "Save & Redeploy" %>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      <% end %>
 
       <%!-- Add existing services --%>
       <%= if @unassigned_services != [] do %>

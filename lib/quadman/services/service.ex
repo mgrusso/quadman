@@ -18,6 +18,7 @@ defmodule Quadman.Services.Service do
     field :status, :string, default: "stopped"
     field :domain, :string
     field :auto_update, :boolean, default: false
+    field :compose_service_key, :string
 
     belongs_to :stack, Quadman.Stacks.Stack
     has_many :environment_variables, Quadman.Services.EnvironmentVariable
@@ -32,7 +33,8 @@ defmodule Quadman.Services.Service do
   def changeset(service, attrs) do
     service
     |> cast(attrs, [:name, :image, :port_mappings, :volumes, :resource_cpu, :resource_mem,
-                    :restart_policy, :quadlet_path, :unit_name, :status, :stack_id, :domain, :auto_update])
+                    :restart_policy, :quadlet_path, :unit_name, :status, :stack_id, :domain,
+                    :auto_update, :compose_service_key])
     |> validate_required([:name, :image])
     |> validate_format(:name, ~r/^[a-z0-9][a-z0-9_-]*$/, message: "must be lowercase alphanumeric, dashes, or underscores")
     |> validate_format(:domain, ~r/^[a-z0-9][a-z0-9.\-]*\.[a-z]{2,}$/, message: "must be a valid hostname")

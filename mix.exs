@@ -4,7 +4,7 @@ defmodule Quadman.MixProject do
   def project do
     [
       app: :quadman,
-      version: "0.5.4",
+      version: "0.6.0",
       elixir: "~> 1.14",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
@@ -60,7 +60,8 @@ defmodule Quadman.MixProject do
       {:bcrypt_elixir, "~> 3.0"},
       {:req, "~> 0.5"},
       {:oban, "~> 2.18"},
-      {:flop, "~> 0.26"}
+      {:flop, "~> 0.26"},
+      {:yaml_elixir, "~> 2.12"}
     ]
   end
 

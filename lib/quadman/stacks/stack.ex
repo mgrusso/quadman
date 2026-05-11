@@ -9,6 +9,7 @@ defmodule Quadman.Stacks.Stack do
     field :name, :string
     field :quadlet_type, :string, default: "multi_container"
     field :status, :string, default: "stopped"
+    field :compose_yaml, :string
 
     has_many :services, Quadman.Services.Service
 
@@ -20,7 +21,7 @@ defmodule Quadman.Stacks.Stack do
 
   def changeset(stack, attrs) do
     stack
-    |> cast(attrs, [:name, :quadlet_type, :status])
+    |> cast(attrs, [:name, :quadlet_type, :status, :compose_yaml])
     |> validate_required([:name])
     |> validate_inclusion(:quadlet_type, @valid_types)
     |> validate_inclusion(:status, @valid_statuses)

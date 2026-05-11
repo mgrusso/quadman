@@ -11,10 +11,13 @@ Built with Elixir, Phoenix LiveView, and SQLite. Inspired by Coolify and Dokploy
 Quadman gives you a browser-based control panel over your Podman workloads:
 
 - **Deploy services** by providing an image name. Quadman pulls the image, generates a [Quadlet](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html) `.container` unit file, reloads the user systemd daemon, and starts the unit — all in a single Oban background job with a live log stream in the UI.
+- **Import docker-compose.yaml** — paste a compose file and Quadman creates a stack and all its services automatically. The YAML is stored and editable in the UI; saving re-diffs the services and redeploys only what changed. See [Docker Compose import](#docker-compose-import) for details.
 - **Manage environment variables** per service, with secret vars written to a `0600` env file and referenced via `EnvironmentFile=` rather than stored inline.
 - **Group services into stacks** and deploy them together.
+- **Auto-update images** — enable the "Auto-update image every 4 hours" toggle on any service and Quadman will pull the image periodically, compare digests, and trigger a redeploy only when a new image is available. Deployment history shows `auto-update` as the trigger.
 - **Stream logs** in real time via `podman logs --follow`.
 - **Monitor resource usage** — CPU and memory polled from the Podman stats API every 10 seconds and cached in ETS, so the dashboard stays fast regardless of how many services are running.
+- **Inspect volumes** — browse named Podman volumes and their metadata from the Volumes page.
 - **Automatic HTTPS via Caddy** — Caddy runs as a Podman container and starts automatically with Quadman. Set a domain on a service and Quadman registers a reverse-proxy route in Caddy's Admin API on deploy, giving you automatic HTTPS with zero config files.
 
 Everything runs as a single Elixir release. No sidecars. No Postgres. SQLite in WAL mode handles concurrent LiveView connections without issue.
@@ -76,22 +79,20 @@ No host Caddy installation required — Caddy runs as a Podman container managed
 ## Quick install (Linux)
 
 ```bash
-# 1. Run the installer
-#    Creates the quadman system user, directories, sysctl rule (ports 80/443),
-#    sudoers entry, subUID/subGID ranges, and the systemd unit.
-curl -fsSL https://raw.githubusercontent.com/mgrusso/quadman/main/priv/deploy/install.sh | sudo bash
-
-# 2. Download and extract the latest release
+# 1. Download and extract the latest release
+sudo mkdir -p /opt/quadman
 curl -fsSL https://github.com/mgrusso/quadman/releases/latest/download/quadman-linux-x86_64.tar.gz \
   | sudo tar -xzf - -C /opt/quadman/
 
-# 3. Re-run install to register the service file from the extracted release
+# 2. Run the installer (reads the bundled quadman.service from the extracted release)
+#    Creates the quadman system user, directories, sysctl rule (ports 80/443),
+#    sudoers entry, subUID/subGID ranges, Podman socket, and the systemd unit.
 curl -fsSL https://raw.githubusercontent.com/mgrusso/quadman/main/priv/deploy/install.sh | sudo bash
 
-# 4. Edit the env file — set PHX_HOST to your domain at minimum
+# 3. Edit the env file — set PHX_HOST to your domain at minimum
 sudo nano /etc/quadman/env
 
-# 5. Start (database migrations run automatically on first boot)
+# 4. Start (database migrations run automatically on first boot)
 sudo systemctl enable --now quadman
 ```
 
@@ -104,6 +105,34 @@ Navigate to `https://<your-host>/register`. The first user to register is automa
 **Enabling or disabling user registration**
 
 Once logged in, go to **Settings → User Registration** and toggle the switch.
+
+---
+
+## Docker Compose import
+
+Go to **Stacks → Import Compose**, paste your `docker-compose.yaml`, give the stack a name, and click **Import & deploy**. Quadman parses the file, creates a service per entry, and queues deployments immediately.
+
+**Supported fields per service:**
+
+| Compose field | Mapped to |
+|---|---|
+| `image:` | Service image (required) |
+| `container_name:` | Service name (falls back to the service key) |
+| `ports:` | Port mappings |
+| `environment:` | Environment variables (list or map form) |
+| `volumes:` | Bind-mount volumes (`/host:/container`) |
+| `restart:` | Restart policy (`always`, `unless-stopped`, `on-failure`, `no`) |
+
+**Not supported:** `build:` (must use a pre-built image — this will be flagged as an error), `networks:`, `depends_on:`, `deploy:` (Swarm), `env_file:`, `healthcheck:` (these are silently ignored with a warning).
+
+Named volumes (e.g. `mydata:/app/data`) are skipped with a warning — only absolute bind-mount paths (`/host/path:/container/path`) are written to the Quadlet.
+
+### Editing and redeploying
+
+Once imported, the compose YAML is stored on the stack and visible in the **Compose YAML** editor on the stack detail page. Edit the YAML and click **Save & Redeploy** — Quadman diffs by service key and:
+- **Creates** services present in the new YAML but not before
+- **Updates** existing services (image, ports, volumes, env vars) and redeploys them
+- **Removes** services no longer in the YAML (stops and deletes the unit)
 
 ---
 
